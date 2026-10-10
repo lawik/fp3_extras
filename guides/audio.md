@@ -76,24 +76,31 @@ the pair, and off by default. Recording from `hw:0,1`, or the `mic`
 device `Fp3Extras.Mic` writes, is mono from the bottom mic.
 
 The codec sends one channel per SLIM TX port that's switched on, and
-the capture device has to be opened with exactly that many channels; a
-different count records silence. Switching the top mic on means routing
-DMIC2 through decimator 8 to TX8 and opening with two channels (channel
-0 bottom, channel 1 top).
+the capture device wants to be opened with exactly that many channels:
+the ADSP mixes a mismatch down or up (one channel from two ports is
+their sum, two channels from one port is it twice), so another count
+doesn't give one channel per mic. Switching the top mic on means
+routing DMIC2 through decimator 8 to TX8 and opening with two channels
+(channel 0 bottom, channel 1 top); `Fp3Extras.Mic.set_secondary/1` does
+the routing and `Fp3Extras.Mic.channels/0` says how many to open.
 
-**On v0.2.4 that path doesn't work**, in two ways:
+**That path needs two kernel fixes**, carried by `nerves_system_fp3` as
+`patches/linux/0001` and `0002` (after v0.3.0). Without them, on v0.2.4
+and v0.3.0:
 
-* Two channels with both ports on records only zeros.
+* Two channels with both ports on records only zeros: the WCD9335
+  driver armed only the lowest TX port of a capture DAI (patch 0001).
 * Opening the capture device with *one* channel while two ports are on
   panics the kernel. The phone reboots; the trace is in
   `/sys/fs/pstore`. The log beforehand fills with
   `wcd9335_slimbus_irq: overflow error on TX port 7`.
+* With 0001 alone the two channels come back bit-identical: the sound
+  card's backend fixup left the channel count at its minimum of 1, so
+  the ADSP opened a mono COPP and copied the bottom mic into both
+  channels (patch 0002 sizes the backend by the routed TX ports).
 
-A kernel patch that arms every TX port of a capture DAI
-(`ASoC-codecs-wcd9335-arm-every-TX-port-of-a-capture-DAI`) is being
-tried as a `patches/linux` patch in a `nerves_system_fp3` build; until
-it's in a release, `Mic.set_secondary(true)` refuses unless started with
-`experimental: true`.
+`Fp3Extras.Mic` doesn't check the system version; on a system without
+the patches, keep the top mic off.
 
 Earlier systems had their own audio crashes: v0.2.2 panicked in the
 SLIMbus controller when playing and recording at once (a DMA completion

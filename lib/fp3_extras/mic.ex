@@ -18,8 +18,10 @@ defmodule Fp3Extras.Mic do
   `set_secondary(true)` adds the top mic as a second channel, on TX8 next
   to TX7. The capture device then has to be opened with two channels: the
   codec sends one channel per mic port that is switched on, and a
-  recording that asks for a different count gets silence. Channel 0 is
-  the bottom mic, channel 1 the top one. `channels/0` tells the count to
+  recording that asks for another count gets the ADSP's mix of them (a
+  mono recording of both mics is their sum, a stereo recording of one
+  mic is that mic twice), not one channel per mic. Channel 0 is the
+  bottom mic, channel 1 the top one. `channels/0` tells the count to
   open; the top mic is off again after a reboot.
 
   The mixer is switched through `ex_audio` (`ExAudio.cset/2`), on its
@@ -29,19 +31,15 @@ defmodule Fp3Extras.Mic do
   `asound.conf` loads it as a hook that tolerates the file's absence;
   `asound_conf_hook/0` is the snippet.
 
-  **The two-channel path does not work on nerves_system_fp3 v0.2.4**
-  (kernel 6.19.5-msm8953): a two-channel capture with both ports on
-  records only zeros, and opening the capture device with one channel
-  while two ports are on crashes the kernel (the phone reboots; the trace
-  is in `/sys/fs/pstore`; it's in the audio guide). A kernel patch that
-  arms every TX port of a capture DAI is being tried. Until it's in,
-  `set_secondary(true)` returns `{:error, :unsupported}` unless started
-  with `experimental: true`, so nothing stumbles into the crash.
+  **The two-channel path needs the kernel fixes that nerves_system_fp3
+  carries as `patches/linux/0001` and `0002`** (after v0.3.0). On v0.2.4
+  and v0.3.0 a two-channel capture with both ports on records only
+  zeros, and opening the capture device with one channel while two ports
+  are on crashes the kernel (the phone reboots; the trace is in
+  `/sys/fs/pstore`; the audio guide has it). Nothing here checks the
+  system version.
 
-  ## Options
-
-  `:experimental` - allow the top mic. The card is ex_audio's,
-  `config :ex_audio, card: 0`.
+  The card is ex_audio's, `config :ex_audio, card: 0`.
   """
 
   use GenServer
@@ -85,10 +83,9 @@ defmodule Fp3Extras.Mic do
   @doc """
   Turns the top mic on or off as the second capture channel.
 
-  Returns `{:error, :unsupported}` unless started with `experimental:
-  true` (see the module doc), and `{:error, reason}` without changing
-  anything if the mixer refuses, for instance before the sound card is
-  up. The reason is `{control, ex_audio_reason}`, e.g.
+  Returns `{:error, reason}` without changing anything if the mixer
+  refuses, for instance before the sound card is up. The reason is
+  `{control, ex_audio_reason}`, e.g.
   `{"SLIM TX8 MUX", {1, "amixer: ..."}}`, or `{control, :enoent}` where
   there is no `amixer`.
   """
@@ -118,8 +115,8 @@ defmodule Fp3Extras.Mic do
   end
 
   @impl GenServer
-  def init(opts) do
-    state = %{secondary: false, experimental: opts[:experimental] == true}
+  def init(_opts) do
+    state = %{secondary: false}
     # Off by default, also after a restart of this process alone. The card
     # may not be up yet, or there may be no amixer (a laptop); then the
     # switches are at their power-on default (off) anyway.
@@ -133,9 +130,6 @@ defmodule Fp3Extras.Mic do
 
   def handle_call({:set_secondary, on?}, _from, %{secondary: on?} = state),
     do: {:reply, :ok, state}
-
-  def handle_call({:set_secondary, true}, _from, %{experimental: false} = state),
-    do: {:reply, {:error, :unsupported}, state}
 
   def handle_call({:set_secondary, on?}, _from, state), do: switch(on?, state)
 

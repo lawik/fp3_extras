@@ -188,6 +188,17 @@ alarm, which is relative to the RTC's own time.
 * **The screen.** The panel and backlight come back as they were. Turn
   the backlight off before suspending if the screen should be dark on
   wake, and let the wake source decide whether to turn it on.
+* **The status LED.** The RGB LED is driven by the PMIC (`rgb:status`
+  under `/sys/class/leds`, `multi_intensity` and `brightness`), so a
+  colour set before a suspend stays lit through it, and a pattern does
+  too: with the `pattern` trigger, `hw_pattern` takes steps of
+  `brightness ms brightness 0` (all of one length, so a blink is
+  `0 500 0 0 255 500 255 0`) and the PMIC plays them from its own
+  memory with the CPU asleep. On nerves_system_fp3 v0.3.0 the trigger is
+  a module (`modprobe ledtrig-pattern`) and `hw_pattern` is refused
+  until `-1` is written to `repeat`, a kernel bug; the next system has
+  both fixed. The software `pattern` attribute runs on a kernel timer
+  and freezes for the suspend.
 
 ## The sleep sequence
 

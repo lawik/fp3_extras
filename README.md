@@ -36,7 +36,7 @@ The guides hold the hardware notes:
 * [Suspend](guides/suspend.md): s2idle, wake sources, timers, Wi-Fi,
   power numbers.
 * [Audio](guides/audio.md): the routing, the softvol trick, the two mics
-  and the kernel crash.
+  and the kernel fixes they need.
 
 Hardware-accelerated video playback isn't in here. It lives in
 [`membrane_v4l2_decoder`](https://github.com/lawik/membrane_v4l2_decoder):

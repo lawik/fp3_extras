@@ -21,17 +21,8 @@ defmodule Fp3Extras.MicTest do
     assert amixer_log() =~ "-c 0 cset name=AIF1_CAP Mixer SLIM TX8 off"
   end
 
-  test "the top mic is refused until the kernel supports it" do
+  test "switching the top mic on routes DMIC2 to TX8 and makes the device stereo" do
     start_supervised!(Mic)
-    File.rm(Path.join(tmp(), "bin/amixer.log"))
-    assert {:error, :unsupported} = Mic.set_secondary(true)
-    refute Mic.secondary?()
-    assert Mic.channels() == 1
-    assert amixer_log() == ""
-  end
-
-  test "experimental: switching the top mic on routes DMIC2 to TX8 and makes the device stereo" do
-    start_supervised!({Mic, experimental: true})
     assert :ok = Mic.set_secondary(true)
     assert Mic.channels() == 2
     assert File.read!(Mic.conf_path()) =~ "channels 2"
@@ -43,7 +34,7 @@ defmodule Fp3Extras.MicTest do
   end
 
   test "a mixer failure changes nothing" do
-    start_supervised!({Mic, experimental: true})
+    start_supervised!(Mic)
     File.touch!(Path.join(tmp(), "bin/fail"))
     assert {:error, {"SLIM TX8 MUX", {1, _output}}} = Mic.set_secondary(true)
     refute Mic.secondary?()
@@ -52,7 +43,7 @@ defmodule Fp3Extras.MicTest do
 
   test "without amixer the top mic can't be switched on" do
     Application.put_env(:ex_audio, :amixer, Path.join(tmp(), "bin/no-such-amixer"))
-    start_supervised!({Mic, experimental: true})
+    start_supervised!(Mic)
     assert {:error, {"SLIM TX8 MUX", :enoent}} = Mic.set_secondary(true)
     refute Mic.secondary?()
   end

@@ -81,9 +81,28 @@ Writing `brightness` puts them in torch mode, which has no timeout: they
 stay on until something writes 0. They are very bright and get hot, so
 always pair `torch(true)` with `torch(false)`. The device tree
 (`sdm632-fairphone-fp3.dts`) gives the LEDs no labels, so the kernel
-names them from colour and function, probably `rgb:status`,
-`white:flash-0` and `white:flash-1`; the library finds them by substring,
-and `ls /sys/class/leds` on a phone settles the names.
+names them from colour and function: `rgb:status` (confirmed on a phone,
+`max_brightness` 255), `white:flash-0` and `white:flash-1`; the library
+finds them by substring.
+
+The notification LED also plays patterns by itself. The LPG driver keeps
+a pattern of up to 64 levels in the PMIC's SDAM memory and the PMIC's
+PBS sequencer steps through it, writing the LPG channels' PWM value
+every so many milliseconds (8 ms units, up to 511 ms a step, one length
+for every step), so a blink or a breathing ramp runs with the CPU asleep
+and through a suspend to idle. The kernel's `pattern` LED trigger
+exposes it as `hw_pattern`, in the trigger's "level ms level 0" form (a
+hold, then an instant change; the LPG can't fade). Every lit channel
+plays the same table, so only full colours keep their hue in hardware;
+the trigger's software `pattern` (a kernel timer stepping `brightness`,
+which scales the three channels together) keeps any colour and takes any
+timing but stops in suspend. `Fp3Extras.Leds.pattern/3` picks between
+them. Two snags on nerves_system_fp3 up to v0.3.0, both handled by the
+module: the trigger is a module (`modprobe ledtrig-pattern`), and it
+starts with a repeat count of 0 that the LPG driver refuses, so
+`hw_pattern` fails with EINVAL until `-1` is written to `repeat`. The
+next system builds the trigger in and carries a kernel patch for the
+repeat count.
 
 The vibrator is the PMI632's `pm8xxx-vibrator`, a force-feedback input
 device rather than a sysfs file. Driving it needs an ioctl, so the system

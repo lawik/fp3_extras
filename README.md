@@ -22,7 +22,7 @@ learned doing it.
 | `Fp3Extras.Orientation` | Portrait or landscape from the accelerometer, with the FP3's axes |
 | `Fp3Extras.LightSensor` | Ambient light from the front camera (the FP3 has no light sensor) |
 | `Fp3Extras.Mic` | The two mics: the bottom one by default, the top one as a second channel |
-| `Fp3Extras.Leds` | The RGB notification LED and the two white flash LEDs (torch mode) through `/sys/class/leds` |
+| `Fp3Extras.Leds` | The RGB notification LED: colours, and blink or breathe patterns the PMIC plays through a suspend; the two white flash LEDs (torch mode) |
 | `Fp3Extras.Vibrator` | The vibration motor, through the Nerves system's `rumble` tool: single buzzes and blocking patterns |
 | `Fp3Extras.Fingerprint` | Experiment: the fingerprint sensor's GPIO lines (dead end, documented) |
 | `Fp3Extras.TEE.QSEECom` | Experiment: talking to TrustZone's Keymaster through a kernel shim |

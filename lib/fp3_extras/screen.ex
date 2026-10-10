@@ -31,12 +31,28 @@ defmodule Fp3Extras.Screen do
   `keep_awake/1` keeps the screen on while the calling process wants it
   (a video playing), until it says otherwise or exits.
 
+  ## Suspending
+
+  With `suspend_after_ms` set, once the screen has been black for that
+  long the `:on_suspend` function is called, in a task of its own. That's
+  where the application suspends the phone, usually with
+  `Fp3Extras.Sleep.sleep/1`; this module only keeps time. The function may
+  take as long as it likes (a sleep returns after the wake, and then waits
+  for Wi-Fi), and the screen keeps working meanwhile: the power button
+  that woke the phone arrives as a tap and brightens it as usual. When the
+  function returns and the screen is still black, the count starts over,
+  so a phone woken by its charger or an alarm goes back to sleep after the
+  same time. Erlang's monotonic clock stops during a suspend, so the count
+  is from the return, not from before the sleep.
+
   ## Settings
 
-  `:brightness` (5..100), `:auto`, `:dim_after_ms`, `:off_after_ms`.
-  They're saved to `display.json` under `Fp3Extras.state_dir/0`,
-  and start from `start_link/1`'s `:defaults`. Dimming at or after
-  turning off would never happen, so dimming is turned off then.
+  `:brightness` (5..100), `:auto`, `:dim_after_ms`, `:off_after_ms`,
+  `:suspend_after_ms` (counted from the screen going black; nil, the
+  default, never). They're saved to `display.json` under
+  `Fp3Extras.state_dir/0`, and start from `start_link/1`'s `:defaults`.
+  Dimming at or after turning off would never happen, so dimming is
+  turned off then; so is suspending when the screen never turns off.
 
   ## Telling the UI
 
@@ -61,8 +77,15 @@ defmodule Fp3Extras.Screen do
 
   @dim_choices [15_000, 30_000, 60_000, 120_000, 300_000, nil]
   @off_choices [30_000, 60_000, 120_000, 300_000, 600_000, nil]
+  @suspend_choices [60_000, 300_000, 900_000, 1_800_000, 3_600_000, nil]
 
-  @defaults %{brightness: 60, auto: false, dim_after_ms: 30_000, off_after_ms: 60_000}
+  @defaults %{
+    brightness: 60,
+    auto: false,
+    dim_after_ms: 30_000,
+    off_after_ms: 60_000,
+    suspend_after_ms: nil
+  }
 
   # Brightness never goes below this (the panel at 0 is black).
   @min_brightness 5
@@ -80,14 +103,18 @@ defmodule Fp3Extras.Screen do
   def dim_choices, do: @dim_choices
   def off_choices, do: @off_choices
 
+  @doc "Choices for suspending after the screen went black, in ms (nil is never)."
+  def suspend_choices, do: @suspend_choices
+
   @doc "The lowest brightness setting."
   def min_brightness, do: @min_brightness
 
   @doc """
   Options: `:notify` (a one-argument function, see the module doc),
   `:defaults` (a map or keyword of settings), `:light_sensor` (a
-  `Fp3Extras.LightSensor.Source` module), `:backlight` (the
-  backlight directory, for tests), `:name`.
+  `Fp3Extras.LightSensor.Source` module), `:on_suspend` (a function of
+  no arguments, called when `suspend_after_ms` runs out; see the module
+  doc), `:backlight` (the backlight directory, for tests), `:name`.
   """
   def start_link(opts \\ []) do
     GenServer.start_link(__MODULE__, opts, name: Keyword.get(opts, :name, __MODULE__))
@@ -101,7 +128,7 @@ defmodule Fp3Extras.Screen do
 
   @doc """
   Changes settings: `:brightness` (#{@min_brightness}..100), `:auto`,
-  `:dim_after_ms`, `:off_after_ms`.
+  `:dim_after_ms`, `:off_after_ms`, `:suspend_after_ms`.
   """
   def put_settings(server \\ __MODULE__, changes),
     do: GenServer.cast(server, {:put_settings, Map.new(changes)})
@@ -133,8 +160,12 @@ defmodule Fp3Extras.Screen do
       settings: load(opts[:defaults] || %{}),
       notify: opts[:notify] || fn _ -> :ok end,
       light_sensor: opts[:light_sensor] || Fp3Extras.LightSensor,
+      on_suspend: opts[:on_suspend],
       mode: :on,
       last_touch: now(),
+      # When the screen went black, and the suspend under way, if any.
+      off_since: nil,
+      suspending: nil,
       backlight: backlight,
       max_raw: max_raw(backlight),
       written: nil,
@@ -175,8 +206,7 @@ defmodule Fp3Extras.Screen do
   def handle_cast(:toggle, state) do
     state = %{state | last_touch: now()}
 
-    {:noreply,
-     if(state.mode == :off, do: wake(state), else: %{state | mode: :off} |> fade_to(0, :off))}
+    {:noreply, if(state.mode == :off, do: wake(state), else: turn_off(state))}
   end
 
   def handle_cast({:put_settings, changes}, state) do
@@ -221,8 +251,9 @@ defmodule Fp3Extras.Screen do
   def handle_cast(:measure, state), do: {:noreply, state |> measure_now() |> publish()}
 
   @impl GenServer
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state),
-    do: {:noreply, %{state | awake: Map.delete(state.awake, ref), last_touch: now()}}
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{awake: awake} = state)
+      when is_map_key(awake, ref),
+      do: {:noreply, %{state | awake: Map.delete(awake, ref), last_touch: now()}}
 
   def handle_info(:check, state) do
     Process.send_after(self(), :check, @check_ms)
@@ -234,7 +265,10 @@ defmodule Fp3Extras.Screen do
     state =
       cond do
         state.mode != :off and off_after != nil and idle >= off_after ->
-          %{state | mode: :off} |> fade_to(0, :off)
+          turn_off(state)
+
+        state.mode == :off and suspend_due?(state) ->
+          suspend(state)
 
         state.mode == :on and dim_after != nil and idle >= dim_after ->
           %{state | mode: :dim} |> fade_to(dim_level(state), :dim)
@@ -289,7 +323,34 @@ defmodule Fp3Extras.Screen do
     {:noreply, publish(state)}
   end
 
+  # The suspend function returned (the phone woke). Still black: count
+  # again from now, as the monotonic clock didn't move while asleep.
+  def handle_info({:DOWN, ref, :process, _pid, reason}, %{suspending: ref} = state) do
+    if reason != :normal,
+      do: Logger.warning("[screen] the suspend function crashed: #{inspect(reason)}")
+
+    # Woken into the UI meanwhile (the power button's tap): no count.
+    off_since = if state.mode == :off, do: now(), else: nil
+    {:noreply, %{state | suspending: nil, off_since: off_since}}
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
+
+  # ---------- Off, and suspending ----------
+
+  defp turn_off(state), do: %{state | mode: :off, off_since: now()} |> fade_to(0, :off)
+
+  defp suspend_due?(%{settings: %{suspend_after_ms: nil}}), do: false
+  defp suspend_due?(%{on_suspend: nil}), do: false
+  defp suspend_due?(%{suspending: suspending}) when suspending != nil, do: false
+  defp suspend_due?(%{off_since: nil}), do: false
+  defp suspend_due?(state), do: now() - state.off_since >= state.settings.suspend_after_ms
+
+  # In its own process, unlinked: a crash there is logged, not fatal.
+  defp suspend(state) do
+    {_pid, ref} = spawn_monitor(state.on_suspend)
+    %{state | suspending: ref}
+  end
 
   # ---------- Levels ----------
 
@@ -303,7 +364,7 @@ defmodule Fp3Extras.Screen do
 
   defp wake(state) do
     state = if state.mode == :off, do: power(state, true), else: state
-    %{state | mode: :on} |> fade_to(on_level(state), :wake) |> maybe_measure()
+    %{state | mode: :on, off_since: nil} |> fade_to(on_level(state), :wake) |> maybe_measure()
   end
 
   defp fade_to(state, level, kind) do
@@ -396,12 +457,21 @@ defmodule Fp3Extras.Screen do
 
     dim = if dim != nil and off != nil and dim >= off, do: nil, else: dim
 
+    suspend =
+      if Map.get(settings, :suspend_after_ms) in @suspend_choices,
+        do: settings.suspend_after_ms,
+        else: @defaults.suspend_after_ms
+
+    # Suspending counts from the screen going black; never black, never.
+    suspend = if off == nil, do: nil, else: suspend
+
     %{
       settings
       | brightness: brightness,
         auto: settings.auto == true,
         dim_after_ms: dim,
-        off_after_ms: off
+        off_after_ms: off,
+        suspend_after_ms: suspend
     }
   end
 

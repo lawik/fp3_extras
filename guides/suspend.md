@@ -202,11 +202,17 @@ alarm, which is relative to the RTC's own time.
 6. The application's `:after` hook.
 7. Wait for Wi-Fi; restart its firmware if it doesn't come back.
 
-A policy on top: screen off for a while and nothing holding the phone
-awake (`Fp3Extras.Screen.keep_awake/1` is the hook) → sleep with an
-RTC wake every few minutes; on each wake check the wall clock, do what's
-due, and sleep again unless the button or USB woke it; the button wakes
-to the UI.
+A policy on top, the simple half of which `Fp3Extras.Screen` now
+provides: its `suspend_after_ms` setting counts from the screen going
+black (so nothing holds the phone awake; `keep_awake/1` keeps the screen
+on), and when it runs out the `:on_suspend` function is called in a
+process of its own. The application puts `sleep/1` there. When the
+function returns with the screen still black, the count starts over, so
+a charger or alarm wake goes back to sleep after the same time, and a
+power button wake arrives as a tap that brightens the screen. The other
+half, an RTC wake every few minutes to do what's due, is the
+application's choice of `:wake_after` and what it does in the `:after`
+hook; nothing needs it yet.
 
 Open: how much s2idle itself draws (the gauge can't say), whether the
 Venus and camera drivers behave after many cycles, and the remoteproc

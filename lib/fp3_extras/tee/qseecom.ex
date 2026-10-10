@@ -19,17 +19,20 @@ defmodule Fp3Extras.TEE.QSEECom do
   listener support, so a command that makes the application wait on the
   non-secure side (RPMB, time) fails with `:eio`.
 
-  The Fairphone 3 bootloader loads the `keymaster` application (Keymaster
-  4) before Linux starts and leaves it resident, so it is the one to poke
-  first, and the only hardware-bound key store the phone has (there's no
-  secure element). Its bootloader-facing commands are public (LK's
-  `km_main.h`, in `km_commands/0`); the key operations are only known by
-  ID, and their request layouts need reversing from the vendor HAL.
+  The Fairphone 3 bootloader loads Keymaster 4 from the `keymaster`
+  partition before Linux starts and leaves it resident, so it is the one
+  to poke first, and the only hardware-bound key store the phone has
+  (there's no secure element). The application registers itself under the
+  name `keymaster64`, not the partition's name; on this phone it has QSEE
+  app ID 65537, and `keymaster_version/0` reports HAL 4.0, trusted app
+  4.164. Its bootloader-facing commands are public (LK's `km_main.h`, in
+  `km_commands/0`); the key operations are only known by ID, and their
+  request layouts need reversing from the vendor HAL.
   """
 
   @device "/dev/qseecom_raw"
 
-  @keymaster "keymaster"
+  @keymaster "keymaster64"
   @km_cmd 0x100
   @km_utils 0x200
 
@@ -74,7 +77,7 @@ defmodule Fp3Extras.TEE.QSEECom do
   @doc """
   Look up a trusted application by name. Returns its QSEE app ID.
 
-  `lookup("keymaster")` is the go/no-go check for the whole approach.
+  `lookup("keymaster64")` is the go/no-go check for the whole approach.
   """
   @spec lookup(String.t()) :: {:ok, non_neg_integer()} | {:error, term()}
   def lookup(app) do

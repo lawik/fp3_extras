@@ -72,7 +72,7 @@ on a laptop and a firmware adds what it uses:
 | `LightSensor` | `fp3_camera` |
 | `Fingerprint` | `circuits_gpio` |
 | `Sleep`, `WiFi` | `vintage_net` for the Wi-Fi wait and the power manager; `wpa_cli`, which the system has |
-| `Volume`, `Mic` | `amixer`, which the Nerves system has |
+| `Volume`, `Mic` | `ex_audio` (a real dependency; it sets mixer controls with the system's `amixer`) |
 
 Everything that keeps something across reboots writes under one
 directory:
@@ -133,4 +133,5 @@ Every module runs without the hardware: reads return `{:error, ...}` or
 nil, writes do nothing, and the GenServers track their state (the
 `Screen` fades its levels, the `Volume` keeps its level) so a UI can be
 developed with the same code. `mix test` exercises them against
-directories of files standing in for sysfs and a fake `amixer`.
+directories of files standing in for sysfs and a fake `amixer` that
+ex_audio is pointed at.

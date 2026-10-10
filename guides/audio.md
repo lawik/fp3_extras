@@ -48,8 +48,8 @@ earpiece route (loudspeaker off, same playback device):
 Unlike the loudspeaker, that path has hardware volume controls (`RX0
 Digital Volume`, `EAR PA Volume`). `ExAudio.cset/2` and `cget/1` set and
 read any control once `ex_audio` is in the firmware; `Fp3Extras.Volume`
-and `Fp3Extras.Mic` shell out to `amixer` themselves so they don't
-depend on it.
+and `Fp3Extras.Mic` use it too, on the card set in `config :ex_audio,
+:card`.
 
 ## Volume
 
@@ -57,9 +57,11 @@ There's no hardware volume control on the loudspeaker path in the
 mixer. ALSA's `softvol` plugin, put in front of the card as the default
 device, gives one: alsa-lib scales the samples and exposes a `Master`
 control (0..255, linear in dB from -60 to 0). `Fp3Extras.Volume`
-sets it with `amixer` and keeps the level in steps. The control doesn't
-exist until the device has been opened once, so the first `amixer` after
-boot fails; apply the level again once sound plays.
+sets it through `ExAudio.cset/2` and keeps the level in steps. The
+control doesn't exist until the device has been opened once, so setting
+it fails after boot until sound has played; call
+`Fp3Extras.Volume.reapply/0` once it does. Without `amixer`, as on a
+laptop, the level is kept and saved but not applied.
 
 `priv/asound.conf` has the device definitions; it goes in the firmware's
 `rootfs_overlay/etc/asound.conf`.

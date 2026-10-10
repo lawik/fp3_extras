@@ -1,4 +1,4 @@
-defmodule Fairphone3Extras.TestSupport do
+defmodule Fp3Extras.TestSupport do
   @moduledoc false
   # Directories of files standing in for sysfs, and a fake amixer.
 
@@ -7,7 +7,7 @@ defmodule Fairphone3Extras.TestSupport do
   def tmp, do: @tmp
 
   def fresh_state_dir do
-    dir = Application.get_env(:fairphone3_extras, :state_dir)
+    dir = Application.get_env(:fp3_extras, :state_dir)
     File.rm_rf!(dir)
     File.mkdir_p!(dir)
     dir
@@ -59,7 +59,7 @@ defmodule Fairphone3Extras.TestSupport do
     root
   end
 
-  @doc "Puts a fake `amixer` first on PATH that logs its arguments. Returns the log path."
+  @doc "Points ex_audio at a fake `amixer` that logs its arguments. Returns the log path."
   def fake_amixer do
     dir = Path.join(@tmp, "bin")
     File.mkdir_p!(dir)
@@ -77,9 +77,8 @@ defmodule Fairphone3Extras.TestSupport do
     File.chmod!(fake, 0o755)
     File.rm(Path.join(dir, "fail"))
 
-    path = System.get_env("PATH")
-    System.put_env("PATH", dir <> ":" <> path)
-    ExUnit.Callbacks.on_exit(fn -> System.put_env("PATH", path) end)
+    Application.put_env(:ex_audio, :amixer, fake)
+    ExUnit.Callbacks.on_exit(fn -> Application.delete_env(:ex_audio, :amixer) end)
     log
   end
 

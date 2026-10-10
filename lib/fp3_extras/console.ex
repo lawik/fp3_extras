@@ -5,8 +5,8 @@ defmodule Fp3Extras.Console do
   nerves_system_fp3 boots with `console=tty0 loglevel=8 fbcon=rotate:3
   fbcon=font:TER16x32`, so the kernel draws every message on the display
   through fbcon, rotated, in a big font. That's good while booting and
-  while nothing else owns the display. Once a DRM application (Emerge)
-  has the panel it's a liability: fbcon still renders every message into
+  while nothing else owns the display. Once a DRM client has the panel
+  it's a liability: fbcon still renders every message into
   the framebuffer behind the application, and a burst of them stalls
   everything else. The case that showed it: after a resume from suspend
   the camera drivers print two WARN backtraces, which froze the BEAM for

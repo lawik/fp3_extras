@@ -21,17 +21,17 @@ defmodule Fp3Extras do
 
   ## Hardware libraries
 
-  Nothing here is a hard dependency. A module that needs one of these
-  calls it only when it's loaded, so add to the firmware what the modules
-  you start need:
+  Apart from `ex_audio`, nothing here is a hard dependency. A module that
+  needs one of these calls it only when it's loaded, so add to the
+  firmware what the modules you start need:
 
     * `Fp3Extras.Buttons` - `input_event`
     * `Fp3Extras.Orientation` - `ex_qcom_smgr`
     * `Fp3Extras.LightSensor` - `fp3_camera`
     * `Fp3Extras.Fingerprint` - `circuits_gpio`
 
-  `Fp3Extras.Volume` and `Fp3Extras.Mic` run `amixer`, which
-  the Nerves system has.
+  `Fp3Extras.Volume` and `Fp3Extras.Mic` set mixer controls through
+  `ex_audio`, the one hardware library this one depends on.
   """
 
   @doc "Where the modules keep their files (`config :fp3_extras, :state_dir`)."

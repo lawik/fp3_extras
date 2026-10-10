@@ -20,7 +20,7 @@ erl_crash.dump
 *.ez
 
 # Ignore package tarball (built via "mix hex.build").
-fairphone3_extras-*.tar
+fp3_extras-*.tar
 
 
 # Test files standing in for sysfs and the state directory.

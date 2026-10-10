@@ -1,12 +1,12 @@
-defmodule Fairphone3Extras.MixProject do
+defmodule Fp3Extras.MixProject do
   use Mix.Project
 
   @version "0.1.0"
-  @source_url "https://github.com/lawik/fairphone3_extras"
+  @source_url "https://github.com/lawik/fp3_extras"
 
   def project do
     [
-      app: :fairphone3_extras,
+      app: :fp3_extras,
       version: @version,
       elixir: "~> 1.18",
       start_permanent: Mix.env() == :prod,
@@ -14,11 +14,11 @@ defmodule Fairphone3Extras.MixProject do
       deps: deps(),
       description:
         "The Fairphone 3's hardware from Elixir on Nerves: backlight and screen " <>
-          "timeouts, volume, buttons, suspend, battery, the kernel console, " <>
+          "timeouts, volume, buttons, suspend and the way back from it, battery, the kernel console, " <>
           "orientation, ambient light from the camera, and the mics.",
       package: package(),
       docs: docs(),
-      name: "Fairphone3Extras",
+      name: "Fp3Extras",
       source_url: @source_url
     ]
   end
@@ -30,12 +30,15 @@ defmodule Fairphone3Extras.MixProject do
     [extra_applications: [:logger]]
   end
 
-  # Nothing here is a hard dependency. Each module calls the library it
-  # needs (input_event, circuits_gpio, ex_qcom_smgr, fp3_camera) only when
-  # it's loaded, so the project compiles and tests on a laptop, and a
-  # firmware adds the libraries for the modules it uses. See the README.
+  # ex_audio is the one hardware library depended on: it routes the sound
+  # card at boot and Volume and Mic set mixer controls through it. The
+  # others (input_event, circuits_gpio, ex_qcom_smgr, fp3_camera) are
+  # called only when loaded, so the project compiles and tests on a
+  # laptop, and a firmware adds the libraries for the modules it uses.
+  # See the README.
   defp deps do
     [
+      {:ex_audio, github: "mlainez/ex_audio"},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end
@@ -60,12 +63,24 @@ defmodule Fairphone3Extras.MixProject do
         "CHANGELOG.md"
       ],
       groups_for_modules: [
-        Display: [Fairphone3Extras.Backlight, Fairphone3Extras.Screen, Fairphone3Extras.Console],
-        Sound: [Fairphone3Extras.Volume, Fairphone3Extras.Mic],
-        Input: [Fairphone3Extras.Buttons, Fairphone3Extras.Orientation],
-        Power: [Fairphone3Extras.Power, Fairphone3Extras.Battery],
-        Sensing: [Fairphone3Extras.LightSensor, Fairphone3Extras.LightSensor.Source],
-        Experiments: [Fairphone3Extras.Fingerprint, Fairphone3Extras.TEE.QSEECom]
+        Display: [
+          Fp3Extras.Backlight,
+          Fp3Extras.Panel,
+          Fp3Extras.Screen,
+          Fp3Extras.Console
+        ],
+        Sound: [Fp3Extras.Volume, Fp3Extras.Mic],
+        Signals: [Fp3Extras.Leds, Fp3Extras.Vibrator],
+        Input: [Fp3Extras.Buttons, Fp3Extras.Orientation],
+        Power: [
+          Fp3Extras.Sleep,
+          Fp3Extras.Power,
+          Fp3Extras.WiFi,
+          Fp3Extras.WiFi.PowerManager,
+          Fp3Extras.Battery
+        ],
+        Sensing: [Fp3Extras.LightSensor, Fp3Extras.LightSensor.Source],
+        Experiments: [Fp3Extras.Fingerprint, Fp3Extras.TEE.QSEECom]
       ]
     ]
   end

@@ -27,7 +27,7 @@ differ.
   ```
 
   `console=tty0 loglevel=8` is why the kernel draws everything on the
-  panel; see the display guide and `Fairphone3Extras.Console`.
+  panel; see the display guide and `Fp3Extras.Console`.
 * **Storage:** Nerves lives inside Android's `userdata` partition
   (`/dev/mmcblk0p62`), partitioned again: p1 boot, p2 rootfs A (squashfs),
   p3 the data partition (F2FS), mounted at `/root` with `/data` a symlink
@@ -62,15 +62,48 @@ applications:
 This library covers what those don't: the things a phone UI needs that
 are plain sysfs, ALSA and evdev.
 
+[`nerves_livebook_fp3`](https://github.com/mlainez/nerves_livebook_fp3)
+is the workshop firmware with a notebook per subsystem (LEDs and the
+vibrator, sensors, battery, cameras, NFC, GPS, modem, Bluetooth, audio
+routes including the earpiece, Scenic on the screen). Its battery and
+screen notebooks cover the same sysfs files as `Fp3Extras.Battery` and
+`Fp3Extras.Console`; its LED and vibrator notebook is where
+`Fp3Extras.Leds` and `Fp3Extras.Vibrator` come from.
+
+## LEDs and the vibrator
+
+The PMI632 drives both kinds of LED. The notification LED is a multicolor
+LED on the PMIC's light pulse generator. Its `multi_intensity` takes red,
+green and blue, each from 0 to `max_brightness`, and `brightness` scales
+all three, so `Fp3Extras.Leds.set_rgb/2` writes the colour and then full
+brightness. The two white flash LEDs are on the PMIC's flash controller.
+Writing `brightness` puts them in torch mode, which has no timeout: they
+stay on until something writes 0. They are very bright and get hot, so
+always pair `torch(true)` with `torch(false)`. The device tree
+(`sdm632-fairphone-fp3.dts`) gives the LEDs no labels, so the kernel
+names them from colour and function, probably `rgb:status`,
+`white:flash-0` and `white:flash-1`; the library finds them by substring,
+and `ls /sys/class/leds` on a phone settles the names.
+
+The vibrator is the PMI632's `pm8xxx-vibrator`, a force-feedback input
+device rather than a sysfs file. Driving it needs an ioctl, so the system
+ships `rumble [-d DEV] MS [STRENGTH]`, which uploads one effect (1 to
+10,000 ms, strength 1 to 65,535), plays it and returns when it's over.
+`Fp3Extras.Vibrator` wraps it. Every call blocks for the length of the
+vibration, so run patterns in a Task if the caller can't wait.
+
 ## sysfs paths that matter
 
 | Path | What |
 |---|---|
 | `/sys/class/backlight/*/` | `brightness` 0..4095, `bl_power` 0/4, `max_brightness` |
+| `/sys/class/graphics/fb0/blank` | fbdev emulation of the DRM device: `4` powers the panel down, `0` up (does nothing while a DRM client holds the display; see the display guide) |
+| `/sys/class/leds/*/` | The RGB notification LED (`brightness`, `multi_intensity`; probably `rgb:status`) and the two white flash LEDs (`brightness` is torch mode; probably `white:flash-0` and `-1`) |
 | `/sys/class/vtconsole/vtcon*/bind` | The framebuffer console (`name` says "frame buffer device") |
 | `/proc/sys/kernel/printk` | Console log level |
-| `/sys/class/power_supply/qg-battery/` | Fuel gauge: `voltage_now`, `current_now` (µV, µA, negative discharging), `capacity` (stale, boot-time only), `status` |
+| `/sys/class/power_supply/qg-battery/` | Fuel gauge: `voltage_now`, `current_now`, `current_avg` (µV, µA, negative discharging), `capacity` (stale, boot-time only), `status`, `temp` (tenths of °C), `health`, `technology`, `charge_full_design` (µAh) |
 | `/sys/class/power_supply/pmi632-charger/` | `online`, `status` (writable: `0` suspends USB input, `1` resumes) |
+| `/sys/class/power_supply/tcpm-source-psy-*/` | USB-C port: `usb_type` lists the modes and brackets the active one, e.g. `C [PD] PD_DRP` |
 | `/sys/power/state`, `/sys/power/mem_sleep` | `mem` → s2idle |
 | `/sys/class/rtc/rtc0/wakealarm` | `+N` to wake in N seconds |
 | `/sys/class/wakeup/*/` | Wakeup sources and their event counts |
@@ -87,8 +120,9 @@ up to 4096x4096 through a V4L2 stateful memory-to-memory device
 (`qcom-venus`), outputting NV12. `membrane_v4l2_decoder` drives it: a
 Rust worker thread owns the device, exports each CAPTURE buffer once as
 a DMA-BUF, and leases frames downstream as `%VideoInterop.Frame{}`, so
-`Membrane.VideoInterop.Sink` can hand them to an Emerge video target
-with no copy. About 150 fps at 1080p, bit-exact with FFmpeg's software
+they reach a video target that accepts DMA-BUF frames with no copy
+(Emerge's `Membrane.VideoInterop.Sink` is the one it was written
+against). About 150 fps at 1080p, bit-exact with FFmpeg's software
 decoder.
 
 Two Venus quirks it works around: after `V4L2_DEC_CMD_STOP` the driver
@@ -99,7 +133,8 @@ fixed in the system since v0.1.4: a session idle for two seconds let
 runtime PM collapse the core mid-session and latch a permanent error,
 after which encoder and decoder were dead until reboot.
 
-The playback pipeline that used it, for reference:
+The playback pipeline that used it, for reference, with Emerge as the
+video target:
 
 ```
 MP4 index source -+-> H264.Parser -> V4L2.H264.Decoder -> Pacer -> VideoInterop.Sink -> Emerge

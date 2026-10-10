@@ -28,12 +28,35 @@ route at boot (`config :ex_audio, card: 0, mixer: [...]`):
 ]
 ```
 
+The earpiece and headphones go through the codec instead, on
+SLIMBUS_0_RX. From the `nerves_livebook_fp3` audio notebook, the
+earpiece route (loudspeaker off, same playback device):
+
+```elixir
+[
+  {"QUIN_MI2S_RX Audio Mixer MultiMedia1", :off},
+  {"SLIMBUS_0_RX Audio Mixer MultiMedia1", :on},
+  {"SLIM RX0 MUX", "AIF_MIX1_PB"},
+  {"RX INT0_1 MIX1 INP0", "RX0"},
+  {"RX INT0 DEM MUX", "CLSH_DSM_OUT"},
+  {"RX0 Digital Volume", 84},
+  {"EAR PA Volume", 4},
+  {"Earpiece Switch", :on}
+]
+```
+
+Unlike the loudspeaker, that path has hardware volume controls (`RX0
+Digital Volume`, `EAR PA Volume`). `ExAudio.cset/2` and `cget/1` set and
+read any control once `ex_audio` is in the firmware; `Fp3Extras.Volume`
+and `Fp3Extras.Mic` shell out to `amixer` themselves so they don't
+depend on it.
+
 ## Volume
 
 There's no hardware volume control on the loudspeaker path in the
 mixer. ALSA's `softvol` plugin, put in front of the card as the default
 device, gives one: alsa-lib scales the samples and exposes a `Master`
-control (0..255, linear in dB from -60 to 0). `Fairphone3Extras.Volume`
+control (0..255, linear in dB from -60 to 0). `Fp3Extras.Volume`
 sets it with `amixer` and keeps the level in steps. The control doesn't
 exist until the device has been opened once, so the first `amixer` after
 boot fails; apply the level again once sound plays.
@@ -48,7 +71,7 @@ into) and DMIC2 at the top (a noise reference). Nothing in the stack
 cancels noise or echo for a recording (the ADSP does that only inside
 cellular calls), so the top mic is only of use to code that processes
 the pair, and off by default. Recording from `hw:0,1`, or the `mic`
-device `Fairphone3Extras.Mic` writes, is mono from the bottom mic.
+device `Fp3Extras.Mic` writes, is mono from the bottom mic.
 
 The codec sends one channel per SLIM TX port that's switched on, and
 the capture device has to be opened with exactly that many channels; a
@@ -81,10 +104,11 @@ an older system as a reboot risk.
 Membrane's PortAudio sink (`membrane_portaudio_plugin`) plays through
 ALSA's default device, so through softvol. With `latency: :low` and a
 2048-frame ring buffer, the output latency is about 10 ms plus
-PortAudio's 256-frame buffer; a video player holds the picture back by
-that much. Membrane's default input queue before the sink holds about
-0.85 s of sound, which plays on after a pause unless the queue is made
-small (`target_queue_size: 8_192` bytes, about 46 ms at 44.1 kHz
+PortAudio's 256-frame buffer. A video player, for example, holds the
+picture back by that much to keep sound and picture together (the
+hardware guide has one such pipeline). Membrane's default input queue
+before the sink holds about 0.85 s of sound, which plays on after a
+pause unless the queue is made small (`target_queue_size: 8_192` bytes, about 46 ms at 44.1 kHz
 stereo).
 
 The precompiled PortAudio bundle is about 100 MB per platform; a release

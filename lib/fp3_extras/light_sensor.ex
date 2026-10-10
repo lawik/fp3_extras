@@ -17,43 +17,34 @@ end
 
 defmodule Fp3Extras.LightSensor do
   @moduledoc """
-  Ambient light, measured with the front camera.
+  Ambient light from the front camera.
 
-  The Fairphone 3 has no light sensor the kernel exposes (the ADSP's
-  sensor manager, `qcom_smgr`, offers accelerometer, gyroscope,
-  magnetometer, pressure and proximity), so the front camera stands in.
-  It faces the same way as the screen, which is the light that matters.
+  The Fairphone 3 has no light sensor (the ADSP offers accelerometer,
+  gyroscope, magnetometer, pressure and proximity). The front camera
+  faces the same way as the screen.
 
-  A measurement takes two small frames (the sensor's 2x2-binned mode, no
-  denoise or sharpening) at one gain and two exposures, and reads the raw
-  green mean that `fp3_camera`'s `cam-snap` reports for each. The light
-  is how fast that mean rises with exposure, scaled to unity gain:
+  A measurement takes two binned frames (no denoise or sharpening) at one
+  gain and two exposures and reads the raw green mean of each from
+  `fp3_camera`'s `cam-snap`:
 
       light = (green_long - green_short) / (exposure_long - exposure_short) * 32 / gain
 
-  The black level is in both frames and cancels out, so it doesn't matter
-  that the sensors' pedestals differ (128 on the Fairphone 3's S5K4H7YX).
+  The black level cancels out. The first pair is at 16x gain (a dim room
+  gives about one count above black at unity gain); if it clips, the next
+  pair down is used. The long exposure stays under the binned frame
+  length (about 1,300 lines). About 1.2 s all told; don't call it from a
+  process that mustn't block.
 
-  The front module gathers little light: in a fairly dim room at unity
-  gain the signal is about one count above black, so the first pair is
-  taken at 16x analogue gain (512; 32 is unity). In brighter light that
-  clips, and the next pair down is used. Binned, the sensor won't expose
-  for longer than its frame (about 1,300 lines on the S5K4H7YX), so the
-  long exposure stays under that. About 1.2 s of `cam-snap` all told, so
-  don't call it from a process that mustn't block.
-
-  The result is in raw counts per exposure line at unity gain. `level/1`
-  maps it onto 0.0..1.0 on a log scale between `:dark` and `:bright`:
+  `level/1` maps the result onto 0.0..1.0 on a log scale between `:dark`
+  and `:bright`:
 
       config :fp3_extras, :light_sensor, dark: 0.0001, bright: 0.5
 
-  The defaults are rough: a fairly dim room measured 0.00075, which they
-  put at 0.24.
+  A fairly dim room measured 0.00075 (0.24 on the defaults).
 
-  Needs `fp3_camera`. Where it isn't loaded, `measure/0` returns
-  `{:error, :no_camera}`, or `{:ok, value}` if `host_light: value` is in
-  the config, for trying automatic brightness out on a laptop. While the
-  front camera streams (a video call), it returns `{:error, :camera_busy}`.
+  Needs `fp3_camera`. Without it `measure/0` returns `{:error, :no_camera}`,
+  or `{:ok, value}` with `host_light: value` in the config. While the
+  front camera streams, `{:error, :camera_busy}`.
   """
 
   @behaviour Fp3Extras.LightSensor.Source

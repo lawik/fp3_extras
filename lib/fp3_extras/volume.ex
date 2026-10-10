@@ -2,42 +2,22 @@ defmodule Fp3Extras.Volume do
   @moduledoc """
   Playback volume in steps, through an ALSA software volume control.
 
-  The Fairphone 3's loudspeaker path (QUIN_MI2S_RX to the AW8898 or, on
-  the 3+, the TAS2557 amplifier) has no hardware volume control in the
-  kernel's mixer. So volume is ALSA's `softvol` plugin, put in front of
-  the sound card in `asound.conf` as the default device: alsa-lib scales
-  the samples, and this module sets the control through `ex_audio`
-  (`ExAudio.cset/2`), on ex_audio's card. ex_audio is also what routes
-  the card's speaker path at boot, from its `:mixer` config. The snippet
-  is `asound_conf/0`; nerves_system_fp3 doesn't ship it, so it goes in
-  the firmware's `rootfs_overlay/etc/asound.conf`.
+  The loudspeaker path has no hardware volume control, so ALSA's `softvol`
+  plugin sits in front of the card as the default device and this module
+  sets its control through `ExAudio.cset/2`. `asound_conf/0` is the
+  snippet; it goes in the firmware's `rootfs_overlay/etc/asound.conf`.
 
-  Two things about softvol controls:
+  The control only exists once the device has been opened, so setting it
+  fails until sound has played; call `reapply/0` then. The raw range is
+  0..255, linear in dB from -60 to 0.
 
-    * The control doesn't exist until the device has been opened once
-      (alsa-lib creates it on first use). Setting it fails before that,
-      so the level is applied again with `reapply/0` once sound has
-      started; the player's job.
-    * The raw range is 0..255 and linear in dB between `min_dB` and
-      `max_dB` (-60 dB to 0 dB in the snippet): each step is the same
-      change in loudness, and 0 is silent enough.
+  Levels are 0..`steps` (16), kept in an `:atomics` counter and saved to
+  `volume` under `Fp3Extras.state_dir/0`. `set/1` never waits on the
+  mixer; fast presses apply only the latest level. Without `amixer` the
+  level is kept but not applied.
 
-  Levels go from 0 to `steps` (16 by default). The current level lives in
-  an `:atomics` counter, so reading it is cheap, and is saved to `volume`
-  under `Fp3Extras.state_dir/0`. Setting the level never waits on the
-  mixer: this process applies it, and when presses come fast only the
-  latest level is applied. Where there is no `amixer`, as on a laptop,
-  the level is kept and saved but not applied.
-
-  ## Options
-
-  `start_link/1` takes:
-
-    * `:control` - the mixer control's name (`"Master"`)
-    * `:steps` - the number of steps above silence (`16`)
-    * `:default` - the level before one is saved (`10`)
-
-  The card is ex_audio's, `config :ex_audio, card: 0`.
+  Options: `:control` (`"Master"`), `:steps` (16), `:default` (10). The
+  card is `config :ex_audio, :card`.
   """
 
   use GenServer
@@ -54,9 +34,8 @@ defmodule Fp3Extras.Volume do
     card = opts[:card] || ExAudio.card()
 
     """
-    # Playback goes through a software volume control ("#{control}") so the
-    # volume is applied in alsa-lib. Fp3Extras.Volume sets it through
-    # ex_audio. The control appears the first time the device is opened.
+    # Playback through a software volume control ("#{control}"), set by
+    # Fp3Extras.Volume. The control appears the first time the device opens.
     pcm.!default {
       type plug
       slave.pcm "softvol"

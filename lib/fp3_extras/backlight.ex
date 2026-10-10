@@ -2,29 +2,15 @@ defmodule Fp3Extras.Backlight do
   @moduledoc """
   The panel's backlight through `/sys/class/backlight`.
 
-  The Fairphone 3's backlight is a PWM-driven LED driver on the PMI632,
-  exposed as one device under `/sys/class/backlight` with
-  `max_brightness` 4095. Three attributes matter:
+  One device, `max_brightness` 4095. `brightness` 0 is black, 1 the
+  dimmest visible. `bl_power` 0 is on, 4 off; off keeps `brightness`, so
+  set it to 0 before `power(true)` when fading in.
 
-    * `brightness` - 0 to `max_brightness`. 0 is black.
-    * `bl_power` - 0 is on, 4 (`FB_BLANK_POWERDOWN`) is off. With the
-      backlight off the panel keeps its contents and `brightness` keeps
-      its value; turning it back on with a non-zero `brightness` lights
-      the panel at that level at once, so set `brightness` to 0 before
-      `power(true)` when fading in.
-    * `actual_brightness` - what the driver applied.
+  Percentages map to raw on a 2.2 power curve: 50% looks like half, and a
+  fade stepped in percent looks even.
 
-  Levels here are percentages, mapped to the raw range on a 2.2 power
-  curve: the eye is roughly logarithmic, so a linear slider would spend
-  most of its travel on the bright end. On that curve 50% looks like
-  half, and a fade stepped evenly in percent looks even. The minimum
-  non-black raw value is 1; the panel at raw 0 shows nothing.
-
-  Functions take the device directory as an option so tests can point
-  them at a directory of files. Without one, the first device under
-  `/sys/class/backlight` is used. Where there's none (a laptop), reads
-  return `{:error, :no_backlight}` and writes are no-ops returning `:ok`,
-  so code built on this runs unchanged on the host.
+  `:device` names the backlight directory (for tests). Without one, reads
+  return `{:error, :no_backlight}` and writes do nothing.
   """
 
   @sysfs "/sys/class/backlight"

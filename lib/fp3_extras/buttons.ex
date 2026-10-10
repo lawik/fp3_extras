@@ -1,31 +1,19 @@
 defmodule Fp3Extras.Buttons do
   @moduledoc """
-  The phone's three buttons and touch activity, from Linux input events.
+  Volume, power and touch activity from evdev, through `input_event`.
 
-  The Fairphone 3 has volume up, volume down and power on one evdev
-  device (`gpio-keys` for the volume keys, the PMIC's `pm8xxx-pwrkey`
-  for power; `input_event` lists them). The touchscreen is another. This
-  reads them with `input_event` and calls handlers:
+  The volume keys are `gpio-keys`, power is `pm8xxx-pwrkey`, the
+  touchscreen its own device. Handlers:
 
-    * `:on_volume` - `fn :up | :down -> any end`, on a press and on each
-      repeat while held
-    * `:on_power_tap` - `fn -> any end`, when power is pressed and
-      released within `:tap_ms` (600). A longer press isn't a tap, so a
-      hold can mean something else later.
-    * `:on_touch` - `fn -> any end`, on any touchscreen event (the
-      finger down, moving and up all count), for a screen timeout
+    * `:on_volume` - `fn :up | :down -> any end`, on press and each repeat
+    * `:on_power_tap` - `fn -> any end`, press and release within
+      `:tap_ms` (600)
+    * `:on_touch` - `fn -> any end`, on any touchscreen event
 
-  Handlers run in this process, so keep them short: send a message or
-  make a cast. Reading evdev alongside a UI toolkit that reads the
-  touchscreen too is fine: evdev hands every event to every reader.
-
-  A device with volume keys that's missing at start (a hotplugged
-  keyboard, say) isn't picked up later. The power button on Android
-  does more (long press for the power menu); here it's left to the
-  application through `:on_power_tap`.
-
-  Needs `input_event` in the firmware; where it isn't loaded `init/1`
-  stops with `:no_input_event`.
+  Handlers run in this process; keep them short. evdev hands every event
+  to every reader, so a UI toolkit can read the touchscreen too. Devices
+  missing at start aren't picked up later. Stops with `:no_input_event`
+  where `input_event` isn't loaded.
   """
 
   use GenServer

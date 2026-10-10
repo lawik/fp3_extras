@@ -1,33 +1,25 @@
 defmodule Fp3Extras.TEE.QSEECom do
   @moduledoc """
-  Talk to trusted applications in the Snapdragon 632's TrustZone (QSEE).
+  Talk to trusted applications in TrustZone (QSEE). Experimental.
 
-  Experimental, and it needs a kernel the released nerves_system_fp3
-  doesn't have yet. Goes through `/dev/qseecom_raw`, a shim the
-  `tee-qseecom` branch of `nerves_system_fp3` adds over the mainline
-  qseecom transport (a patch that puts `fairphone,fp3` on qseecom's
-  allowlist and adds `drivers/firmware/qcom/qcom_qseecom_raw.c`). One
-  `write/2` carries an application name plus a request buffer; the
-  kernel looks the application up, hands the request to it over an SMC
-  call and stores the response, which the next read returns:
+  Goes through `/dev/qseecom_raw`, the system's shim over mainline
+  qseecom. One `write/2` carries an application name and a request; the
+  kernel looks the app up, sends the request over SMC, and the next read
+  returns the response:
 
       write: <<name_len::little-32, rsp_len::little-32>> <> app_name <> request
       read:  <<status::little-signed-32, app_id::little-32, rsp::binary>>
 
-  An empty request is a lookup only. Mainline qseecom can only talk to
-  applications that are already loaded; it can't load one, and it has no
-  listener support, so a command that makes the application wait on the
-  non-secure side (RPMB, time) fails with `:eio`.
+  An empty request is a lookup. Mainline qseecom can't load applications
+  and has no listener support, so a command that waits on the non-secure
+  side (RPMB, time) fails with `:eio`.
 
-  The Fairphone 3 bootloader loads Keymaster 4 from the `keymaster`
-  partition before Linux starts and leaves it resident, so it is the one
-  to poke first, and the only hardware-bound key store the phone has
-  (there's no secure element). The application registers itself under the
-  name `keymaster64`, not the partition's name; on this phone it has QSEE
-  app ID 65537, and `keymaster_version/0` reports HAL 4.0, trusted app
-  4.164. Its bootloader-facing commands are public (LK's `km_main.h`, in
-  `km_commands/0`); the key operations are only known by ID, and their
-  request layouts need reversing from the vendor HAL.
+  The bootloader loads Keymaster 4 and leaves it resident, registered as
+  `keymaster64` (app ID 65537; `keymaster_version/0` reports HAL 4.0, TA
+  4.164). It is the phone's only hardware-bound key store. The
+  bootloader-facing commands are public (LK's `km_main.h`,
+  `km_commands/0`); the key operations' request layouts need reversing
+  from the vendor HAL.
   """
 
   @device "/dev/qseecom_raw"

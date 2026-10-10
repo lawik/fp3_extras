@@ -1,73 +1,57 @@
 defmodule Fp3Extras.Screen do
   @moduledoc """
-  The display's brightness, and dimming then turning off when nobody's
-  touching it, with fades.
+  Brightness, dimming and turning off when nobody's touching the screen,
+  with fades.
 
-  The screen is `:on`, `:dim` or `:off`. Without touches it dims after
-  `dim_after_ms` and goes black after `off_after_ms` (both counted from the
-  last touch; either can be nil for never). A touch (`touch/0`) wakes it;
-  a tap on the power button toggles it (`toggle/0`). Feed those from
+  Modes `:on`, `:dim`, `:off`. Without touches it dims after
+  `dim_after_ms` and goes black after `off_after_ms` (from the last touch;
+  nil is never). `touch/0` wakes it, `toggle/0` flips it. Feed both from
   `Fp3Extras.Buttons`:
 
       {Fp3Extras.Buttons,
        on_touch: &Fp3Extras.Screen.touch/0,
-       on_power_tap: &Fp3Extras.Screen.toggle/0,
-       on_volume: fn :up -> Fp3Extras.Volume.up(); :down -> Fp3Extras.Volume.down() end}
+       on_power_tap: &Fp3Extras.Screen.toggle/0}
 
-  Every change of level fades: about a second to dim, a little less from
-  there to black, a quarter second to wake, a short fade when the
-  brightness is changed. Levels are percentages, faded in that space and
-  written through `Fp3Extras.Backlight` on its 2.2 power curve, so
-  a fade looks even. Once black, the backlight is powered off; on waking
-  it's set to 0 and powered on before the fade up, so the panel doesn't
-  flash at the old level.
+  Levels are percentages faded through `Fp3Extras.Backlight`'s 2.2 curve:
+  about a second to dim, 800 ms to black, 250 ms to wake. Once black the
+  backlight is powered off; on waking it's set to 0 before power on, so
+  the panel doesn't flash at the old level.
 
-  With `auto: true` the level follows a light sensor (`:light_sensor`, a
-  `Fp3Extras.LightSensor.Source`; the front camera by default),
-  measured when automatic is turned on, on waking, and every minute
-  while the screen is fully on. Measuring runs in a task, as the camera
-  takes about a second.
+  With `auto: true` the level follows `:light_sensor` (a
+  `Fp3Extras.LightSensor.Source`, the front camera by default), measured
+  when turned on, on waking and every minute while on, in a task.
 
-  `keep_awake/1` keeps the screen on while the calling process wants it
-  (a video playing), until it says otherwise or exits.
+  `keep_awake/1` keeps the screen on while the calling process wants it,
+  or until it exits.
 
   ## Suspending
 
-  With `suspend_after_ms` set, once the screen has been black for that
-  long the `:on_suspend` function is called, in a task of its own. That's
-  where the application suspends the phone, usually with
-  `Fp3Extras.Sleep.sleep/1`; this module only keeps time. The function may
-  take as long as it likes (a sleep returns after the wake, and then waits
-  for Wi-Fi), and the screen keeps working meanwhile: the power button
-  that woke the phone arrives as a tap and brightens it as usual. When the
-  function returns and the screen is still black, the count starts over,
-  so a phone woken by its charger or an alarm goes back to sleep after the
-  same time. Erlang's monotonic clock stops during a suspend, so the count
-  is from the return, not from before the sleep.
+  With `suspend_after_ms` set, once the screen has been black that long
+  `:on_suspend` is called in a process of its own; put
+  `Fp3Extras.Sleep.sleep/1` there. The screen keeps working meanwhile: a
+  power-button wake arrives as a tap and brightens it. If the function
+  returns with the screen still black the count starts over, so a charger
+  or alarm wake goes back to sleep. The count runs from the return, as the
+  monotonic clock stops during a suspend.
 
   ## Settings
 
   `:brightness` (5..100), `:auto`, `:dim_after_ms`, `:off_after_ms`,
-  `:suspend_after_ms` (counted from the screen going black; nil, the
-  default, never). They're saved to `display.json` under
-  `Fp3Extras.state_dir/0`, and start from `start_link/1`'s `:defaults`.
-  Dimming at or after turning off would never happen, so dimming is
-  turned off then; so is suspending when the screen never turns off.
+  `:suspend_after_ms` (nil by default). Saved to `display.json` under
+  `Fp3Extras.state_dir/0`; `start_link/1`'s `:defaults` seed them.
+  Dimming at or after turning off is forced to never; so is suspending
+  when the screen never turns off.
 
-  ## Telling the UI
+  ## Notifying
 
-  `:notify` is a function called with each change:
+  `:notify` is called with each change:
 
-    * `{:screen, on?}` - the panel went black, or came back. A UI can skip
-      rendering while it's off, and should swallow the touch that wakes
-      it, as that touch shouldn't also press a button.
-    * `{:display, map}` - the settings plus `level` (the on level now),
-      `light` (the sensor's description), `light_error` and `measuring`.
+    * `{:screen, on?}` - the panel went black or came back. Swallow the
+      touch that wakes it, or it presses what was under the finger.
+    * `{:display, map}` - the settings plus `level`, `light`,
+      `light_error` and `measuring`. The same map is `display/0`.
 
-  The same map is `display/0`.
-
-  Without a backlight (a laptop) the levels are tracked and reported but
-  nothing is written, so a UI can be developed with the same code.
+  Without a backlight the levels are tracked but nothing is written.
   """
 
   use GenServer

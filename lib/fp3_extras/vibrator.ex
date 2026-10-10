@@ -1,33 +1,17 @@
 defmodule Fp3Extras.Vibrator do
   @moduledoc """
-  The vibration motor, through nerves_system_fp3's `rumble` tool.
+  The vibration motor, through the system's `rumble` tool.
 
-  The Fairphone 3's vibrator hangs off the PMI632 PMIC and the kernel
-  exposes it (`pm8xxx-vibrator`) as a force-feedback input device under
-  `/dev/input`, not as a sysfs file. Making it vibrate means uploading a
-  force-feedback effect with an ioctl and then writing an event to play
-  it, and Elixir can't issue ioctls, so the Nerves system ships a small
-  tool for it:
+  The PMI632's `pm8xxx-vibrator` is a force-feedback input device, which
+  needs an ioctl, so the system ships
+  `rumble [-d /dev/input/eventN] DURATION_MS [STRENGTH]`: one rumble of
+  1..10000 ms at strength 1..65535 (default 65535), returning when it has
+  played. The driver keeps only the top bits of the strength, so values
+  below 256 don't move the motor.
 
-      rumble [-d /dev/input/eventN] DURATION_MS [STRENGTH]
-
-  It finds the first input device that supports `FF_RUMBLE` (or uses the
-  one given with `-d`), plays one rumble of `DURATION_MS` (1 to 10000)
-  at `STRENGTH` (1 to 65535, default 65535), waits until it has played,
-  and exits. The driver turns the strength into a motor voltage, keeping
-  only the top bits, so strengths below 256 don't vibrate at all and
-  the steps in between are coarse.
-
-  Every call here runs the tool and so blocks for the duration of the
-  vibration, plus the time to start a process. `pattern/2` plays a
-  sequence back to back in the calling process; run it in a `Task` if
-  the caller can't wait.
-
-  The executable is `rumble` on the PATH, or what's configured:
-
-      config :fp3_extras, :rumble, "/usr/bin/rumble"
-
-  Where it isn't there (a laptop), calls return `{:error, :enoent}`.
+  Every call blocks for the vibration; run `pattern/2` in a Task if the
+  caller can't wait. The executable is `rumble` on the PATH or
+  `config :fp3_extras, :rumble, path`. Without it, `{:error, :enoent}`.
   """
 
   @max_ms 10_000

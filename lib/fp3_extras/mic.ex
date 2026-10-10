@@ -2,44 +2,26 @@ defmodule Fp3Extras.Mic do
   @moduledoc """
   The two microphones, and the ALSA device to record from.
 
-  The phone has two digital mics on its WCD9335 codec: `DMIC1` at the
-  bottom, the one you speak into, and `DMIC2` at the top, a reference for
-  the surrounding noise. Nothing in the sound stack cancels noise or echo
-  for a recording (the ADSP only does that inside cellular calls), so the
-  top mic is only of use to code that processes the pair itself, and a
-  hindrance to anything that just wants a voice. It is off by default.
+  The WCD9335 codec has `DMIC1` at the bottom (speech) and `DMIC2` at the
+  top (a noise reference). Nothing in the stack cancels noise or echo for
+  recordings, so the top mic only helps code that processes the pair. It
+  is off by default.
 
-  Capture is device 1 of ex_audio's card, `hw:0,1` on the phone
-  (MultiMedia2 from SLIMBUS_0_TX), fed by the codec's
-  SLIM TX ports. `ex_audio` routes the bottom mic through decimator 7 to
-  TX7 at boot (the audio guide has the mixer settings), so recording is
-  mono.
+  Capture is device 1 of ex_audio's card (`hw:0,1`, MultiMedia2 from
+  SLIMBUS_0_TX). ex_audio routes the bottom mic to SLIM TX7 at boot, so
+  recording is mono. `set_secondary(true)` routes the top mic to TX8. The
+  codec sends one channel per TX port switched on, and the capture device
+  must be opened with exactly that many channels: any other count gets
+  the ADSP's mix (a mono recording of both mics is their sum, a stereo
+  recording of one is it twice). Channel 0 is the bottom mic, 1 the top.
+  `channels/0` says how many to open; the top mic is off again after a
+  reboot.
 
-  `set_secondary(true)` adds the top mic as a second channel, on TX8 next
-  to TX7. The capture device then has to be opened with two channels: the
-  codec sends one channel per mic port that is switched on, and a
-  recording that asks for another count gets the ADSP's mix of them (a
-  mono recording of both mics is their sum, a stereo recording of one
-  mic is that mic twice), not one channel per mic. Channel 0 is the
-  bottom mic, channel 1 the top one. `channels/0` tells the count to
-  open; the top mic is off again after a reboot.
-
-  The mixer is switched through `ex_audio` (`ExAudio.cset/2`), on its
-  card. So that a mono recording always works, this writes ALSA device
-  `mic` as a plug over device 1 of that card, pinned to the current channel count, in
+  So that `mic` always opens right, this writes ALSA device `mic` as a
+  plug over device 1 pinned to the current channel count, in
   `asound.mic.conf` under `Fp3Extras.state_dir/0`. The firmware's
-  `asound.conf` loads it as a hook that tolerates the file's absence;
-  `asound_conf_hook/0` is the snippet.
-
-  **The two-channel path needs the kernel fixes that nerves_system_fp3
-  carries as `patches/linux/0001` and `0002`** (after v0.3.0). On v0.2.4
-  and v0.3.0 a two-channel capture with both ports on records only
-  zeros, and opening the capture device with one channel while two ports
-  are on crashes the kernel (the phone reboots; the trace is in
-  `/sys/fs/pstore`; the audio guide has it). Nothing here checks the
-  system version.
-
-  The card is ex_audio's, `config :ex_audio, card: 0`.
+  `asound.conf` loads it as a hook that tolerates the file's absence:
+  `asound_conf_hook/0`.
   """
 
   use GenServer
@@ -99,11 +81,8 @@ defmodule Fp3Extras.Mic do
   @doc "The `asound.conf` hook that loads `conf_path/0` when it exists."
   def asound_conf_hook do
     """
-    # The microphone: ALSA device "mic" (e.g. `arecord -D mic -c 1 -r 16000`),
-    # defined in a file Fp3Extras.Mic writes, as the card's capture
-    # device (hw:#{ExAudio.card()},1) has to be opened with exactly as many
-    # channels as the mixer routes codec mic ports into it. Loaded as a hook so that the
-    # file's absence (before the app has written it) is not an error.
+    # ALSA device "mic", written by Fp3Extras.Mic with the channel count the
+    # mixer routes into hw:#{ExAudio.card()},1. A hook, so its absence is fine.
     @hooks [
       {
         func load
@@ -117,9 +96,7 @@ defmodule Fp3Extras.Mic do
   @impl GenServer
   def init(_opts) do
     state = %{secondary: false}
-    # Off by default, also after a restart of this process alone. The card
-    # may not be up yet, or there may be no amixer (a laptop); then the
-    # switches are at their power-on default (off) anyway.
+    # Off by default. If the card isn't up yet the switches are off anyway.
     _ = apply_mixer(@secondary_off)
     write_conf(1)
     {:ok, state}
@@ -161,9 +138,7 @@ defmodule Fp3Extras.Mic do
     File.mkdir_p(Fp3Extras.state_dir())
 
     File.write(conf_path(), """
-    # Written by Fp3Extras.Mic.
-    # #{channels} channel(s): the sound card's capture device must be opened
-    # with as many channels as mic ports are routed into it.
+    # Written by Fp3Extras.Mic: #{channels} channel(s), one per routed mic port.
     pcm.#{@device} {
       type plug
       slave {

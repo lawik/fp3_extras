@@ -2,41 +2,25 @@ defmodule Fp3Extras.Power do
   @moduledoc """
   Suspend and wake.
 
-  The Fairphone 3 on nerves_system_fp3 (kernel 6.19, msm8953) suspends to
-  idle: `/sys/power/mem_sleep` offers `s2idle` only, and writing `mem` to
-  `/sys/power/state` takes it there. It comes back on:
+  The Fairphone 3 suspends to idle only (`/sys/power/mem_sleep` offers
+  `s2idle`). Writing `mem` to `/sys/power/state` blocks until the resume.
+  It wakes on the power button, the RTC alarm
+  (`/sys/class/rtc/rtc0/wakealarm`) and USB.
 
-    * the power button
-    * the RTC alarm (`/sys/class/rtc/rtc0/wakealarm`), which is how a
-      suspend of a known length is done
-    * USB: plugging the cable in or out, and the charger
+  `suspend/1` sets the alarm when asked, writes `mem` and returns once
+  resumed. Around it:
 
-  `suspend/1` does the whole thing: sets the alarm when asked to, writes
-  `mem`, and returns once the kernel has resumed (the write blocks for
-  the whole suspend). What was learned is in the suspend guide; the
-  short version:
-
-    * Erlang's monotonic clock and its timers stop during suspend (the
-      kernel's `CLOCK_MONOTONIC` doesn't advance in s2idle; `CLOCK_BOOTTIME`
-      does). A `Process.send_after/3` due in a minute still fires a minute
-      of *awake* time later. Code that needs wall time across a suspend
-      reads `System.os_time/0` before and after.
-    * After the resume the camera drivers print two WARN backtraces. With
-      the framebuffer console bound and `loglevel=8`, drawing them on the
-      panel stalls the system for about ten seconds; see
+    * Erlang's monotonic clock and its timers stop in s2idle;
+      `System.os_time/0` moves. Read it before and after for the real
+      elapsed time.
+    * The camera drivers print two WARN backtraces on resume. With fbcon
+      bound they stall the system for about ten seconds; see
       `Fp3Extras.Console`.
-    * Wi-Fi (wcn36xx) fails to take the interface down at suspend entry
-      ("Failed to disable vif: -EIO") and the reconnect after the wake
-      takes a second on most wakes and minutes on some. `Fp3Extras.WiFi`
-      has the recovery and the wake-on-wireless triggers.
+    * Wi-Fi fails to take the interface down at suspend entry and
+      reconnects slowly on some wakes; see `Fp3Extras.WiFi`.
 
-  This module is only the suspend. `Fp3Extras.Sleep` does what goes
-  around it: the display, the sensor streams, the console and Wi-Fi.
-  The screen's own state (`Fp3Extras.Screen`) isn't touched here: turn
-  the backlight off before suspending if it should be, and the panel
-  comes back as it was.
-
-  Paths are options for tests (`:root` for the sysfs root).
+  `Fp3Extras.Sleep` does the display, sensors, console and Wi-Fi around
+  this. `:root` is the sysfs root (for tests).
   """
 
   @sysfs_root "/"

@@ -1,45 +1,29 @@
 defmodule Fp3Extras.WiFi do
   @moduledoc """
-  Getting Wi-Fi back after a suspend, and keeping it through one.
+  Wi-Fi after a suspend, and through one.
 
-  The Fairphone 3's Wi-Fi is the WCNSS core (wcn36xx) running firmware
-  loaded by remoteproc. Around a suspend to idle, two things were seen on
-  nerves_system_fp3 v0.2.4:
+  Wi-Fi is the WCNSS core (wcn36xx), its firmware loaded by remoteproc.
+  Without a wake-on-wireless trigger, mac80211 takes `wlan0` down at
+  suspend and the driver's command fails ("Failed to disable vif: -EIO").
+  wpa_supplicant usually reconnects within a second of the wake, but
+  sometimes minutes later and once not at all. A reconfigure doesn't help
+  when the firmware is stuck.
 
-    * **Tearing the interface down fails.** Without a wake-on-wireless
-      trigger, mac80211 takes `wlan0` down on suspend, and wcn36xx's
-      command to the firmware fails: "Failed to disable vif: -EIO" in the
-      log, at suspend entry. After the resume wpa_supplicant reconnects on
-      its own, usually within a second, but on one wake it took eleven
-      minutes and on another the interface sat disconnected. That's
-      wpa_supplicant backing off against a firmware that answers scans
-      badly, and a reconfigure doesn't help when the firmware itself is
-      stuck.
-    * **Keeping the interface up avoids it.** With a wake-on-wireless
-      trigger set (`wake_on_wireless/2`), the driver leaves the association
-      in place, hands ARP, IPv6 neighbour discovery and group rekeying to
-      the firmware, and the error doesn't happen. The catch is the trigger
-      itself: `:any` wakes the phone on any unicast frame, which on a LAN
-      with Tailscale, mDNS and friends is every second or two, and
-      `:magic_packet` didn't wake the phone in the one test made (it did
-      stay asleep through pings, as it should).
+  `reset/1` restarts the WCNSS remoteproc, reloading the firmware; `wlan0`
+  disappears and reappears. `Fp3Extras.Sleep` uses it when VintageNet
+  doesn't report a connection in time, and `Fp3Extras.WiFi.PowerManager`
+  lets VintageNet's watchdog do the same. The restart hasn't been run on
+  a phone yet.
 
-  So the recovery is: wait for VintageNet to report the connection, and if
-  it doesn't come back in time, restart the WCNSS remoteproc (`reset/1`),
-  which reloads the firmware and makes `wlan0` disappear and reappear.
-  `Fp3Extras.Sleep` does that after every wake. The same reset serves
-  `Fp3Extras.WiFi.PowerManager`, a `VintageNet.PowerManager` for `wlan0`,
-  so VintageNet's own watchdog can do it whenever the link is down for too
-  long, suspend or not.
+  With a trigger from `wake_on_wireless/2` the association survives the
+  suspend and the firmware answers ARP, neighbour discovery and rekeying.
+  `:any` wakes on every unicast frame, which on a LAN is every second or
+  two. `:magic_packet` stayed asleep through pings but didn't wake on a
+  Wake-on-LAN frame in the one test.
 
-  The remoteproc restart hasn't been exercised on the phone yet, only the
-  stop and start files it writes have been read. Treat the first run as
-  the test.
-
-  `wait_connected/2` and the power manager need `vintage_net`, which this
-  library doesn't depend on; they're no-ops without it. `wake_on_wireless/2`
-  runs `wpa_cli`, which the Nerves system has, against VintageNet's control
-  socket directory.
+  `wait_connected/2` and the power manager need `vintage_net`.
+  `wake_on_wireless/2` runs the system's `wpa_cli` against VintageNet's
+  control socket.
   """
 
   require Logger
@@ -149,11 +133,7 @@ defmodule Fp3Extras.WiFi do
   """
   @type trigger :: :any | :magic_packet | :off
 
-  @doc """
-  Sets wpa_supplicant's `wowlan_triggers`, which it passes to the driver
-  through nl80211. Takes effect at the next suspend. See the module doc
-  for what each trigger did in practice.
-  """
+  @doc "Sets wpa_supplicant's `wowlan_triggers`. Takes effect at the next suspend."
   @spec wake_on_wireless(trigger(), keyword()) :: :ok | {:error, term()}
   def wake_on_wireless(trigger, opts \\ []) when trigger in [:any, :magic_packet, :off] do
     wpa_cli = opts[:wpa_cli] || @wpa_cli
@@ -188,12 +168,8 @@ defmodule Fp3Extras.WiFi do
         config :vintage_net,
           power_managers: [{Fp3Extras.WiFi.PowerManager, [ifname: "wlan0", watchdog_timeout: 60_000]}]
 
-    VintageNet pets the watchdog itself whenever the interface passes its
-    internet check, so nothing else is needed. Power off stops the
-    remoteproc, power on starts it; VintageNet waits for `wlan0` to
-    reappear before configuring it. `Fp3Extras.Sleep` can also ask for a
-    reset directly after a wake, through `VintageNet.PowerManager.PMControl.force_reset/1`,
-    when the power manager is configured.
+    VintageNet pets the watchdog on every passed internet check. Power off
+    stops the remoteproc, power on starts it.
     """
 
     if Code.ensure_loaded?(VintageNet.PowerManager), do: @behaviour(VintageNet.PowerManager)

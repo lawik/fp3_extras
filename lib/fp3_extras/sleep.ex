@@ -1,70 +1,39 @@
 defmodule Fp3Extras.Sleep do
   @moduledoc """
-  A whole sleep: quiet the phone, suspend it, and put it back together
-  after the wake.
+  A whole sleep: quiet the phone, suspend it, put it back together.
 
-  `Fp3Extras.Power.suspend/1` is the one write that suspends the kernel.
-  Everything around it is what was learned the hard way on
-  nerves_system_fp3 v0.2.4, and `sleep/1` does it in order:
+  `sleep/1`, in order:
 
-  1. **The application's `:before` hook.** Turn the display off and stop
-     rendering first. The one hang seen in a day of suspend cycles came
-     with the GPU mid-frame at suspend entry; blanking first costs
-     nothing and leaves nothing in flight.
-  2. **Stop the sensor streams** (`stop_sensors/1`). The ADSP streams the
-     accelerometer at 200 Hz (the driver ignores a lower rate), and the
-     gyro, magnetometer and proximity alongside, into readers that hold
-     the IIO devices open. Writing `0` to each device's `buffer/enable`
-     stops the stream at the ADSP while the readers stay blocked on
-     their open file; `1` resumes it on the same file descriptor. No
-     process is touched. Awake, the streams cost about 140 mW and wake
-     the cores a thousand times a second.
-  3. **Take the kernel console off the panel**
-     (`Fp3Extras.Console.release_panel/0`, idempotent). After every
-     resume the camera drivers print two WARN backtraces, and with fbcon
-     bound drawing them stalled the BEAM for about ten seconds; unbound,
-     about one.
-  4. **Suspend** with the RTC alarm when `:wake_after` is given, noting
-     the wakeup sources before and after to say what woke the phone.
-  5. **Restart the sensor streams** that were running.
-  6. **The application's `:after` hook**, with what's known so far.
-  7. **Wait for Wi-Fi.** wcn36xx fails to take the interface down at
-     suspend entry ("Failed to disable vif: -EIO") and the reconnect
-     after the wake takes anywhere from a second to minutes. `sleep/1`
-     waits `:wifi_timeout_ms` for VintageNet to report the connection
-     and, failing that, restarts the Wi-Fi firmware
-     (`Fp3Extras.WiFi.reset/1`) and waits once more.
+  1. The `:before` hook: turn the display off, stop rendering. The one
+     hang seen came with the GPU mid-frame at suspend entry.
+  2. `stop_sensors/1`: `0` into `buffer/enable` of each ADSP IIO device.
+     The accelerometer streams at 200 Hz whatever rate is asked, about
+     140 mW and a thousand core wakeups a second. Readers stay blocked on
+     their open file and resume on `1`.
+  3. `Fp3Extras.Console.release_panel/0`, so the resume's WARN backtraces
+     don't stall the BEAM for ten seconds.
+  4. `Fp3Extras.Power.suspend/1`, with the RTC alarm if `:wake_after`,
+     noting wakeup sources before and after to say what woke the phone.
+  5. Restart the sensor streams.
+  6. The `:after` hook, with the wake so far.
+  7. Wait `:wifi_timeout_ms` for VintageNet to report the connection;
+     failing that, `Fp3Extras.WiFi.reset/1` and wait again.
 
   The result says how long the phone was gone by the wall clock, how
-  little Erlang's monotonic clock moved meanwhile (it stops in s2idle, so
-  every timer is late by the difference), what woke it, and what Wi-Fi
-  did. Keep the hooks short: the `:before` hook runs with everything
-  still awake, the `:after` hook before Wi-Fi is back.
-
-  On a laptop nothing exists: `sleep/1` returns `{:error, :enoent}` from
-  the suspend write, after running the `:before` hook and before the
-  `:after` one.
+  little the monotonic clock moved (every timer is late by the
+  difference), what woke it, and what Wi-Fi did. On a laptop `sleep/1`
+  returns `{:error, :enoent}` after the `:before` hook.
 
   ## Wake sources
 
-  What ends a suspend on the Fairphone 3: the power button, the RTC
-  alarm, the USB cable and charger, and the battery gauge's own events.
-  Not the touchscreen or the volume keys (no `wakeup-source` in the
-  device tree), not the modem, and Wi-Fi only with a wake-on-wireless
-  trigger (`Fp3Extras.WiFi.wake_on_wireless/2`). The power button's
-  press is also delivered to the application as a key event after the
-  wake, so a `Fp3Extras.Buttons` `on_power_tap` fires; decide there
-  whether a wake should toggle the screen.
+  The power button, the RTC alarm, USB and the charger, the battery gauge.
+  Not the touchscreen or volume keys (no `wakeup-source` in the device
+  tree), not the modem, and Wi-Fi only with
+  `Fp3Extras.WiFi.wake_on_wireless/2`. The power button's press is also
+  delivered as a key event after the wake, so `on_power_tap` fires.
 
-  ## A policy
-
-      # Screen's been off a while and nothing holds it awake:
-      {:ok, wake} = Fp3Extras.Sleep.sleep(
-        wake_after: 600,
-        before: fn -> MyPhone.UI.blank() end,
-        after: fn _ -> MyPhone.UI.unblank_if(wake_by_button?) end
-      )
-      # wake.woke_by is :rtc for the timer: do what's due and sleep again;
+      {:ok, wake} = Fp3Extras.Sleep.sleep(wake_after: 600, before: &MyUI.blank/0)
+      # wake.woke_by: :rtc means do what's due and sleep again;
       # :pwrkey or :usb means someone wants the phone.
   """
 
@@ -75,13 +44,10 @@ defmodule Fp3Extras.Sleep do
   @iio_root "/sys/bus/iio/devices"
 
   @typedoc """
-  What a sleep came back with: `slept_ms` by the wall clock,
-  `monotonic_ms` by Erlang's clock (the difference is how late every
-  timer now is), `woke_by` (`:rtc`, `:pwrkey`, `:usb`, `:charger`,
-  `:battery`, `:other` or `:unknown`), `sensors` (the IIO devices that
-  were streaming and are again), and `wifi` (`{:ok, ms}` once connected,
-  `{:reset, ms}` if the firmware had to be restarted first, `{:error, _}`
-  if it never came back or there's no VintageNet).
+  `slept_ms` by the wall clock, `monotonic_ms` by Erlang's clock,
+  `woke_by` (`:rtc`, `:pwrkey`, `:usb`, `:charger`, `:battery`, `:other`,
+  `:unknown`), `sensors` (the IIO devices stopped and restarted), `wifi`
+  (`{:ok, ms}`, `{:reset, ms}` after a firmware restart, or `{:error, _}`).
   """
   @type wake :: %{
           slept_ms: non_neg_integer(),
@@ -92,12 +58,11 @@ defmodule Fp3Extras.Sleep do
         }
 
   @typedoc """
-  Options: `:wake_after` seconds for the RTC alarm (none to wait for the
-  button or USB); `:before` and `:after` hooks (the latter gets the
-  partial wake map); `:sensors` false to leave the streams running;
-  `:wifi_timeout_ms` to wait for the connection (20 s; 0 skips Wi-Fi);
-  `:wifi_reset` false to never restart the firmware; and `:root`,
-  `:iio_root`, `:remoteproc_root` for tests.
+  `:wake_after` seconds for the RTC alarm; `:before` and `:after` hooks
+  (the latter gets the partial wake); `:sensors` false leaves the streams
+  running; `:wifi_timeout_ms` (20 s; 0 skips Wi-Fi); `:wifi_reset` false
+  never restarts the firmware; `:root`, `:iio_root`, `:remoteproc_root`
+  for tests.
   """
   @type opts :: keyword()
 

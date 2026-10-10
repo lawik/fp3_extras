@@ -1,59 +1,29 @@
 defmodule Fp3Extras.Battery do
   @moduledoc """
-  The battery and the charger, from `/sys/class/power_supply`.
+  The battery and charger from `/sys/class/power_supply`.
 
-  Two supplies matter on the Fairphone 3:
-
-    * `qg-battery` - the PMI632's fuel gauge (QGauge). `voltage_now` and
-      `current_now` are live (µV and µA; current is negative while
-      discharging). **`capacity` is not**: on this kernel it's the
+    * `qg-battery`, the PMI632 fuel gauge. `voltage_now` and `current_now`
+      are live (µV, µA, negative while discharging). `capacity` is the
       open-circuit estimate made at boot and never updates, so it can't
-      drive a low-battery warning. Count on voltage, or on coulombs from
-      `current_now` over time, until the gauge driver learns better.
-    * `pmi632-charger` - the charger. `status` is `Charging`, `Full`,
-      `Discharging` or `Not charging`, and `online` says whether USB
-      power is present. `status` is also writable: writing `0` suspends
-      the USB input, so the phone runs from its battery with the cable
-      still attached, and `1` resumes charging. That's the trick behind
-      `measure/2`.
+      drive a low-battery warning. `current_avg` reads 0.
+    * `pmi632-charger`. `status` is `Charging`, `Full`, `Discharging` or
+      `Not charging`; `online` says USB power is present. Writing `0` to
+      `status` suspends the USB input (the phone runs from battery with
+      the cable in), `1` resumes it.
+    * `tcpm-source-psy-*`, the USB-C port. `usb_type` brackets the active
+      mode (`C`, `PD`).
 
-  A third, `tcpm-source-psy-*`, is the USB-C port controller. Its
-  `usb_type` lists every mode the port knows and puts the one in use in
-  brackets, which is how `read/1` tells a plain USB-C cable (`C`) from
-  a Power Delivery charger (`PD`).
+  ## Measuring the system's draw
 
-  The gauge also reports the battery's temperature, its `health` and
-  chemistry, the capacity it was designed for and an averaged current.
-  The averaged current is the better number for anything that looks
-  ahead, because `current_now` jumps with every burst of CPU or radio
-  work. `hours_left/1` divides the remaining charge by it, the same
-  rough sum the workshop's battery notebook does, and inherits every
-  weakness of `capacity` along the way.
+  Charger current includes what goes into the battery. With the input
+  suspended, `current_now * voltage_now` is the system alone. `measure/2`
+  does that and restores charging in an `after`. Over SSH, run it in a
+  process that outlives the connection: a dropped channel kills the eval
+  process and its `after` doesn't run.
 
-  ## Measuring what the phone draws
-
-  Charger input current is noisy and includes what goes into the
-  battery, so it says little about the system. With the input suspended,
-  `current_now * voltage_now` from the fuel gauge is the system's draw.
-  `measure/2` does that for a while and restores charging in an `after`,
-  so a crash in the middle doesn't leave the phone on battery.
-
-  Run it in a process that outlives the caller (a `spawn` logging to a
-  file) when working over SSH: a dropped SSH channel kills the eval
-  process, and `after` blocks don't run in a killed process.
-
-  Numbers from 2026-10-10 on nerves_system_fp3 v0.2.4, idle with the UI
-  up, for a sense of scale:
-
-  | State | Draw |
-  |---|---|
-  | Screen on, idle | about 0.92 W |
-  | Backlight off | about 0.90 W |
-  | Plus the sensor streams stopped | about 0.76 W |
-  | Plus two BEAM schedulers online | about 0.68 W |
-
-  Taking CPU cores offline saved nothing measurable. Suspend to idle is
-  the next lever (`Fp3Extras.Power`).
+  Idle with a UI up: screen on about 0.92 W, backlight off 0.90 W, sensor
+  streams stopped 0.76 W, two BEAM schedulers 0.68 W. Taking cores
+  offline saved nothing. Suspend (`Fp3Extras.Power`) is the next lever.
   """
 
   @sysfs "/sys/class/power_supply"
@@ -77,18 +47,11 @@ defmodule Fp3Extras.Battery do
         }
 
   @doc """
-  The battery now. `level` is the fuel gauge's `capacity` (see the
-  caveat above), `charging` is true for `Charging` and `Full`, `current_a`
-  is negative while discharging, and `power_w` is `voltage * current`,
-  negative while discharging. Nil where there's no battery.
-
-  `temperature_c` comes from `temp` (tenths of a degree), `design_mah`
-  from `charge_full_design` (µAh), and `current_avg_a` from
-  `current_avg`, negative while discharging like `current_a`. `health`
-  and `technology` are the kernel's strings (`Good`, `Li-ion`).
-  `usb_type` is the USB-C port's active mode, the bracketed entry in
-  its `usb_type` (`"C"`, `"PD"`, ...), nil when nothing is marked.
-  Each of these is nil when its file is missing.
+  The battery now, or nil without one. `level` is the gauge's `capacity`
+  (see above), `charging` is true for `Charging` and `Full`, `current_a`
+  and `power_w` are negative while discharging. `temperature_c` is
+  `temp` / 10, `design_mah` is `charge_full_design` / 1000, `usb_type` the
+  USB-C port's bracketed mode. A field is nil when its file is missing.
   """
   @spec read(opts()) :: t() | nil
   def read(opts \\ []) do
@@ -123,21 +86,10 @@ defmodule Fp3Extras.Battery do
   end
 
   @doc """
-  A rough estimate from a `read/1` map: hours to full while `Charging`,
-  hours left at the present drain otherwise. It takes the share of
-  `design_mah` that `level` says is left and divides it by
-  `current_avg_a`. Nil when less than a milliamp flows or a field it
-  needs is nil.
-
-  It is only as good as `level`, and on nerves_system_fp3 v0.2.4 that
-  is the fuel gauge's `capacity`, the open-circuit estimate made at boot
-  that never updates. After an hour off the charger the estimate still
-  starts from the boot-time level. On top of that an ageing battery
-  holds less than its design capacity, and the charger slows down as
-  the battery fills, so treat the result as an order of magnitude.
-
-      Fp3Extras.Battery.read() |> Fp3Extras.Battery.hours_left()
-      #=> 9.9
+  Hours to full while `Charging`, else hours left: the share of
+  `design_mah` that `level` says is left, over `current_avg_a`. Nil under
+  a milliamp or with a nil field. Only as good as `level`, which doesn't
+  update after boot, so an order of magnitude at best.
   """
   @spec hours_left(t() | nil) :: float() | nil
   def hours_left(%{level: level, status: status, design_mah: design, current_avg_a: avg})
@@ -176,11 +128,10 @@ defmodule Fp3Extras.Battery do
   end
 
   @doc """
-  Measures the system's draw: suspends the charger input, samples the
-  fuel gauge every `interval_ms` for `duration_ms` (skipping the first
-  `settle_ms`, as the current takes a moment to move), then resumes
-  charging whatever happens. Returns the mean draw in watts and the
-  samples.
+  Measures the system's draw: suspends the charger input, waits
+  `settle_ms` (3 s), samples the gauge every `interval_ms` (1 s) for
+  `duration_ms`, resumes charging whatever happens. Returns the mean in
+  watts and the samples.
 
       Fp3Extras.Battery.measure(30_000)
       #=> {:ok, %{watts: 0.91, samples: [...]}}

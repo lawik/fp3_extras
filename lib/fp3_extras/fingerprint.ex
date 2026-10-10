@@ -1,33 +1,21 @@
 defmodule Fp3Extras.Fingerprint do
   @moduledoc """
-  Experiment: can the rear fingerprint sensor act as a touch button?
+  Experiment: the rear fingerprint sensor as a touch button. A dead end.
 
-  The sensor is an Elan part on an SPI bus (BLSP2 QUP3, `spi_7` at
-  0x7af7000, GPIO 135-138) that TrustZone owns: the mainline device tree
-  lists those pins in `gpio-reserved-ranges`, and reading them, or the
-  controller, from Linux most likely faults into TrustZone and reboots
-  the phone. Even Android's kernel driver (`elan_fp_qcom_tee`) never
-  touches SPI; all sensor I/O happens in a QSEE trusted application
-  (`fingerprint.mdt`) that the vendor HAL drives through qseecom. What
-  Linux does own are the three sideband lines that driver drives:
+  The Elan sensor sits on SPI7 (GPIO 135-138), which TrustZone owns: the
+  device tree reserves the pins and touching them from Linux faults.
+  Android's driver never touches SPI either; all I/O happens in a QSEE
+  app through qseecom. Linux owns three sideband lines:
 
-    * GPIO 90 - sensor VDD enable (low at boot: the sensor is off)
+    * GPIO 90 - VDD enable (low at boot)
     * GPIO 140 - reset, active low
-    * GPIO 48 - interrupt from the sensor, rising edge on Android
+    * GPIO 48 - interrupt, rising edge on Android
 
-  `watch/0` powers the sensor, pulses reset the way the Android driver
-  does, and logs every edge on GPIO 48. If the chip raised its IRQ on
-  finger contact without any SPI setup, touches would show up here.
-
-  **Result on 2026-10-10: nothing.** GPIO 48 reads low with the internal
-  pull-up, pull-down or no pull, sensor powered or not, and never moved
-  on touches or on reset pulses. Something on that net holds it low, and
-  the chip raises no interrupt without SPI configuration it can only get
-  from the TrustZone app. Kept as a harness in case a different reset or
-  power sequence turns out to matter, and because GPIO 90 is a power
-  lever: the sensor is off unless something turns it on.
-
-  The way forward, if any, is through TrustZone: see
+  `watch/0` powers the sensor, pulses reset like the Android driver and
+  logs edges on GPIO 48. Result: GPIO 48 reads low with any pull, powered
+  or not, and never moves on touch or reset. The chip raises no interrupt
+  without SPI setup only the TrustZone app can do. Kept as a harness, and
+  because GPIO 90 is a power lever. The way forward is
   `Fp3Extras.TEE.QSEECom`. Needs `circuits_gpio`.
   """
 

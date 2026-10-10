@@ -1,34 +1,19 @@
 defmodule Fp3Extras.Panel do
   @moduledoc """
-  The panel and display pipeline, through fbdev's `blank`.
+  Powers the panel and display pipeline down through fbdev's `blank`.
 
-  The msm DRM driver emulates a framebuffer at `/dev/fb0`, and its
-  `/sys/class/graphics/fb0/blank` reaches the DRM driver's DPMS: writing
-  `4` (`FB_BLANK_POWERDOWN`) asks it to switch the display pipeline off
-  and put the panel to sleep, `0` wakes it. That's a different lever from
-  the backlight: `Fp3Extras.Backlight.power/1` only turns the light off,
-  which saves about 20 mW, while the panel's DSI link, the display
-  controller and the panel itself stay powered.
+  The msm DRM driver emulates `/dev/fb0`, and
+  `/sys/class/graphics/fb0/blank` reaches its DPMS: `4` powers the
+  pipeline and panel down (about 340 mW), `0` brings them back.
+  `Fp3Extras.Backlight.power/1` only turns the light off (about 20 mW).
 
-  This is how mlainez's `hello_watch` darkens the TicWatch Pro 3 on the
-  same kind of Qualcomm display stack: the app blanks
-  `/sys/class/graphics/fb0/blank`, and its system notes say that powers
-  the panel down with the DSI panel driver.
+  The fb helper defers to a DRM master, so the write does nothing while an
+  application drives the display through DRM: stop the client, then
+  blank; unblank, then restart it. This module is untested in that
+  sequence. Suspend to idle takes the display down regardless, so this
+  only matters awake with the screen dark.
 
-  On the Fairphone 3 the write itself was timed on 2026-10-10 (the
-  suspend guide has the numbers), but only with nothing holding the
-  display. An application that drives the display through DRM is the DRM
-  master while it does, and the fb helper defers to the master: blanking
-  then does nothing. So the application may have to stop its DRM client,
-  or have it release the display, before the pipeline actually powers
-  down. This module has not been tried in that sequence as of
-  2026-10-10; measure with `Fp3Extras.Battery.measure/2` when you do.
-
-  Suspend to idle (`Fp3Extras.Power`) takes the display down regardless,
-  so blanking matters only while the phone stays awake with the screen
-  dark.
-
-  Without the file (a laptop) both functions return `:ok` and do nothing.
+  Without the file both functions return `:ok`.
   """
 
   @blank "/sys/class/graphics/fb0/blank"

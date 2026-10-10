@@ -2,36 +2,27 @@ defmodule Fp3Extras.Orientation do
   @moduledoc """
   Which way up the phone is held, from the accelerometer.
 
-  The orientation is `:portrait`, `:landscape_left` (the top of the phone
-  pointing left, turned counter-clockwise) or `:landscape_right`. Upside
-  down isn't used, like on most phones.
+  `:portrait`, `:landscape_left` (the top pointing left) or
+  `:landscape_right`. Upside down isn't used. The `mode` picks it:
 
-  How it's picked is the `mode`:
+    * `:auto` - the accelerometer, read four times a second through
+      `ExQcomSmgr.read(:accel)`. A new orientation has to hold for half a
+      second within 30° of upright or sideways. Lying flat keeps the last
+      one.
+    * `:portrait` or `:landscape` - locked. Landscape is the side last
+      turned to, or left.
 
-    * `:auto` - follows the accelerometer, read four times a second
-      through `ExQcomSmgr.read(:accel)` (`ex_qcom_smgr`, the sensors on
-      the ADSP). A new orientation has to hold for half a second, and the
-      phone has to be tilted well into it (within 30° of upright or
-      sideways), so it doesn't flip back and forth at 45°. Lying flat
-      keeps the orientation it had.
-    * `:portrait` or `:landscape` - locked. Landscape is the side the
-      phone was last turned to, or left.
-
-  Without `ex_qcom_smgr` (a laptop) `:auto` stays portrait and the locked
-  modes are how landscape is tried out.
-
-  The mode is saved to `orientation.json` under
-  `Fp3Extras.state_dir/0`. Changes go to `:notify` as
-  `%{orientation: ..., mode: ..., sensor: boolean}`.
+  Without `ex_qcom_smgr` `:auto` stays portrait. The mode is saved to
+  `orientation.json` under `Fp3Extras.state_dir/0`. Changes go to
+  `:notify` as `%{orientation: ..., mode: ..., sensor: boolean}`.
 
   ## Axes
 
-  Orientation is worked out in the screen's axes: x to its right, y to
-  its top, and readings the reaction to gravity (y is +9.8 m/s² held
-  upright). The sensor may be mounted turned, and on the Fairphone 3 it
-  is: held upright, its x reads +9.8. So the default `:axes` swaps them,
-  `[x: {:y, 1}, y: {:x, 1}]`: each screen axis names the sensor axis it
-  is and which way it goes.
+  Orientation is worked out in the screen's axes: x to its right, y to its
+  top, readings the reaction to gravity. The Fairphone 3's sensor is
+  mounted a quarter turn off: held upright, its x reads +9.8. The default
+  `:axes`, `[x: {:y, 1}, y: {:x, 1}]`, names for each screen axis the
+  sensor axis and sign.
   """
 
   use GenServer

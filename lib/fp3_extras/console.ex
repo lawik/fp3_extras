@@ -1,33 +1,23 @@
 defmodule Fp3Extras.Console do
   @moduledoc """
-  Keeps the kernel's messages off the panel, and quiet.
+  Keeps kernel messages off the panel, and quiet.
 
-  nerves_system_fp3 boots with `console=tty0 loglevel=8 fbcon=rotate:3
-  fbcon=font:TER16x32`, so the kernel draws every message on the display
-  through fbcon, rotated, in a big font. That's good while booting and
-  while nothing else owns the display. Once a DRM client has the panel
-  it's a liability: fbcon still renders every message into
-  the framebuffer behind the application, and a burst of them stalls
-  everything else. The case that showed it: after a resume from suspend
-  the camera drivers print two WARN backtraces, which froze the BEAM for
-  about eleven seconds with fbcon bound, against about one second with
-  it unbound (or with the console log level lowered).
-
-  There are two independent levers:
+  The kernel boots with `console=tty0 loglevel=8 fbcon=rotate:3
+  fbcon=font:TER16x32`, so fbcon draws every message on the panel. Once a
+  DRM client owns the panel, fbcon still renders behind it, and a burst
+  stalls the system: the two camera WARN backtraces after every resume
+  froze the BEAM for about eleven seconds with fbcon bound, one second
+  unbound.
 
     * `release_panel/0` unbinds the framebuffer console
       (`/sys/class/vtconsole/vtconN/bind`). Nothing is drawn on the panel
-      any more, including the IEx prompt erlinit opens on tty1. Messages
-      still go to the log buffer (`dmesg`, RingLogger through
-      nerves_logging's kmsg tailer) and to the serial console.
-    * `set_loglevel/1` changes the console log level
-      (`/proc/sys/kernel/printk`, what `dmesg -n` sets). Messages below
-      it aren't written to any console, panel or serial, but stay in the
-      log buffer. `quiet/0` sets it to 3 (errors and worse).
+      any more, the IEx prompt on tty1 included. Messages still reach
+      `dmesg`, RingLogger and the serial console.
+    * `set_loglevel/1` sets the console log level
+      (`/proc/sys/kernel/printk`); messages below it stay in the log
+      buffer only. `quiet/0` sets 3.
 
-  Do the first once the display application is up; the second is a
-  matter of taste, as it also quiets the serial console. On a laptop
-  neither file exists and both functions do nothing.
+  Without the files (a laptop) both do nothing.
   """
 
   require Logger

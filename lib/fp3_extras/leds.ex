@@ -1,69 +1,37 @@
 defmodule Fp3Extras.Leds do
   @moduledoc """
-  The notification LED and the flashlight through `/sys/class/leds`.
+  The notification LED and the flash LEDs through `/sys/class/leds`.
 
-  The Fairphone 3 has two kinds of LED, both driven by the PMI632 PMIC:
-
-    * An RGB notification LED, driven by the PMIC's LPG (light pulse
-      generator) and registered as one multicolor LED. Its
-      `multi_intensity` takes three numbers, red, green and blue, each
-      0 to `max_brightness`, and its `brightness` scales all three at
-      once. `set_rgb/2` writes the colour and then `brightness` at the
-      maximum, so the colour is what you asked for.
-    * Two white flash LEDs next to the rear camera, driven by the PMIC's
-      flash controller (`leds-qcom-flash`). Writing `brightness` puts an
-      LED in torch mode: it stays on, at that current, until something
-      writes 0. There is no timeout in torch mode (the flash timeout only
-      applies to a strobe, which the camera stack fires). The LEDs are
-      very bright and get hot, so whoever turns them on must turn them
-      off; `torch(false)` does that.
+  Both are on the PMI632. The RGB notification LED (`rgb:status`,
+  `max_brightness` 255) is one multicolor LED on the PMIC's LPG:
+  `multi_intensity` takes red, green and blue, and `brightness` scales all
+  three. `set_rgb/2` writes the colour, then full brightness. The two
+  white flash LEDs (`white:flash-0`, `white:flash-1`) are on the flash
+  controller; writing `brightness` is torch mode, with no timeout. They
+  get hot: pair `torch(true)` with `torch(false)`.
 
   ## Patterns
 
-  The notification LED can blink or breathe on its own. `pattern/3`
-  takes a colour and a list of steps, each a level 0..255 to hold for
-  some milliseconds, and plays them in one of two ways:
+  `pattern/3` takes a colour and steps, each a level 0..255 held for some
+  milliseconds, and plays them one of two ways:
 
-    * **In the PMIC.** The LPG keeps the steps in the PMIC's own memory
-      (its SDAM) and a sequencer (the PBS) plays them, so the pattern
-      runs with the CPU asleep: it carries on through a suspend to idle
-      (`Fp3Extras.Sleep`). The hardware wants two to 64 steps of one
-      length, each under 512 ms (rounded to 8 ms), and every lit channel
-      plays the whole curve, so only the seven full colours keep their
-      hue: red, green, blue, yellow, cyan, magenta and white. Orange
-      would blink as yellow.
+    * **In the PMIC.** The LPG stores the steps in the PMIC's SDAM and its
+      PBS sequencer plays them, so the pattern runs with the CPU asleep
+      and through a suspend to idle. Two to 64 steps of one length, each
+      under 512 ms (8 ms units). Every lit channel plays the same curve,
+      so only full colours keep their hue: red, green, blue, yellow, cyan,
+      magenta, white.
     * **On a kernel timer.** The `pattern` trigger steps `brightness`
-      itself, which scales the three channels together, so any colour
-      and any step lengths work. It stops while the phone is suspended
-      and costs a wakeup per step.
+      itself: any colour, any timing, a wakeup per step, and it stops in
+      suspend.
 
-  `:mode` picks: `:auto` (the default) takes the PMIC when the colour
-  and the steps allow and the timer otherwise, `:hardware` and
-  `:software` insist. `blink/2` and `breathe/2` build the steps.
-  `set_rgb/2` and `rgb_off/1` end a pattern.
+  `:mode` is `:auto` (the PMIC when it can), `:hardware` or `:software`.
+  `blink/2` and `breathe/2` build steps. `set_rgb/2` and `rgb_off/1` end
+  a pattern. Needs the kernel's `pattern` LED trigger.
 
-  Both need the kernel's `pattern` LED trigger. nerves_system_fp3 up to
-  v0.3.0 builds it as a module, so `pattern/3` loads it with modprobe
-  when the LED's `trigger` file doesn't list it. On those systems the
-  trigger also has a bug (fixed in the next one): it starts with a
-  repeat count of 0, which the LPG driver refuses, so `pattern/3` writes
-  the repeat count before the pattern, which works either way.
-
-  ## Names
-
-  The device tree gives the LEDs no `label`, so the kernel names them
-  from their colour and function: `rgb:status` for the notification LED
-  (`max_brightness` 255, seen on a phone) and `white:flash-0` and
-  `white:flash-1` for the flash LEDs. The LEDs are found by a substring
-  of the name, "rgb" for the notification LED and "flash" for the flash
-  LEDs, as the workshop notebook found them. Every function that picks
-  an LED also takes an explicit name with the `:led` option.
-
-  Functions take the LED class directory as the `:root` option (default
-  `/sys/class/leds`) so tests can point them at a directory of files.
-  Where there's no such directory (a laptop), reads return
-  `{:error, :no_leds}` and writes are no-ops returning `:ok`, so code
-  built on this runs unchanged on the host.
+  LEDs are found by substring ("rgb", "flash") or named with `:led`.
+  `:root` is the LED class directory (for tests). Without it, reads return
+  `{:error, :no_leds}` and writes do nothing.
   """
 
   import Kernel, except: [max: 2]
@@ -71,7 +39,6 @@ defmodule Fp3Extras.Leds do
   require Logger
 
   @sysfs "/sys/class/leds"
-  @trigger_module "ledtrig-pattern"
   # The LPG driver's limits for a pattern it plays itself.
   @hw_max_steps 64
   @hw_max_ms 511
@@ -187,12 +154,10 @@ defmodule Fp3Extras.Leds do
         ]
 
   @doc """
-  Plays a pattern on the notification LED: `steps` are levels, 0..255, to
-  hold for so many milliseconds each, in `color`, over and over (or once
-  with `repeat: :once`). Returns which way it's playing, `{:ok, :hardware}`
-  in the PMIC or `{:ok, :software}` on a kernel timer; see the module
-  doc for what each can do. At least two steps. Without the LED, does
-  nothing and returns `{:ok, :none}`.
+  Plays `steps` (at least two) in `color` on the notification LED, over
+  and over or once with `repeat: :once`. Returns `{:ok, :hardware}` (the
+  PMIC), `{:ok, :software}` (a kernel timer) or `{:ok, :none}` without
+  the LED.
 
       Fp3Extras.Leds.pattern({0, 0, 255}, [{255, 100}, {0, 900}])
   """
@@ -295,9 +260,8 @@ defmodule Fp3Extras.Leds do
     end
   end
 
-  # In the PMIC the levels are the LUT's own bytes; on the timer they're
-  # the LED's brightness, so scaled to its maximum. Both files take the
-  # trigger's "level ms level 0" form, a hold then an instant change.
+  # PMIC levels are the LUT's bytes; timer levels are brightness, scaled to
+  # the maximum. Both take the trigger's "level ms level 0" form (a hold).
   defp play(:hardware, led, steps, max, opts) do
     auto? = Keyword.get(opts, :mode, :auto) == :auto
 
@@ -326,20 +290,8 @@ defmodule Fp3Extras.Leds do
     do:
       Enum.map_join(steps, " ", fn {level, ms} -> "#{scale.(level)} #{ms} #{scale.(level)} 0" end)
 
-  # The trigger is a module on nerves_system_fp3 up to v0.3.0.
-  defp ensure_trigger(led, opts) do
-    cond do
-      trigger_listed?(led, opts) ->
-        :ok
-
-      modprobe = System.find_executable("modprobe") ->
-        _ = System.cmd(modprobe, [@trigger_module], stderr_to_stdout: true)
-        if trigger_listed?(led, opts), do: :ok, else: {:error, :no_pattern_trigger}
-
-      true ->
-        {:error, :no_pattern_trigger}
-    end
-  end
+  defp ensure_trigger(led, opts),
+    do: if(trigger_listed?(led, opts), do: :ok, else: {:error, :no_pattern_trigger})
 
   defp trigger_listed?(led, opts) do
     case File.read(Path.join([root(opts), led, "trigger"])) do

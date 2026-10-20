@@ -23,24 +23,23 @@ defmodule Fp3Extras.LightSensor do
   gyroscope, magnetometer, pressure and proximity). The front camera
   faces the same way as the screen.
 
-  A measurement takes two binned frames (no denoise or sharpening) at one
-  gain and two exposures and reads the raw green mean of each from
-  `fp3_camera`'s `cam-snap`:
+  A measurement subscribes to small NV12 frames (`Fp3Camera.subscribe/2`)
+  at a manual exposure and gain, lets a few frames go by for the settings
+  to take, and averages the luma of the next ones. The camera's ISP
+  applies a gamma curve, so the mean is taken back to linear (gamma 2.2)
+  and scaled by the exposure:
 
-      light = (green_long - green_short) / (exposure_long - exposure_short) * 32 / gain
+      light = (luma / 255) ^ 2.2 / (exposure_s * gain)
 
-  The black level cancels out. The first pair is at 16x gain (a dim room
-  gives about one count above black at unity gain); if it clips, the next
-  pair down is used. The long exposure stays under the binned frame
-  length (about 1,300 lines). About 1.2 s all told; don't call it from a
-  process that mustn't block.
+  The first try is at 30 ms and 8x gain, for a dim room; if the picture
+  clips, a less sensitive setting is used, down to 250 µs at unity gain
+  for daylight. About a second per try; don't call it from a process
+  that mustn't block.
 
   `level/1` maps the result onto 0.0..1.0 on a log scale between `:dark`
   and `:bright`:
 
-      config :fp3_extras, :light_sensor, dark: 0.0001, bright: 0.5
-
-  A fairly dim room measured 0.00075 (0.24 on the defaults).
+      config :fp3_extras, :light_sensor, dark: 0.001, bright: 1000
 
   Needs `fp3_camera`. Without it `measure/0` returns `{:error, :no_camera}`,
   or `{:ok, value}` with `host_light: value` in the config. While the
@@ -51,12 +50,20 @@ defmodule Fp3Extras.LightSensor do
 
   @compile {:no_warn_undefined, Fp3Camera}
 
-  # {gain, short exposure, long exposure}, from dim light to bright.
-  @pairs [{512, 50, 1_200}, {32, 50, 1_200}, {32, 4, 50}]
-  # 10-bit raw: a mean above this has clipped highlights.
-  @clip 900
+  # {gain, exposure in µs}, from dim light to bright.
+  @settings [{8.0, 30_000}, {1.0, 4_000}, {1.0, 250}]
+  # Small enough to average quickly, large enough for both phones' front
+  # cameras (at least a sixteenth of the largest mode).
+  @size {320, 240}
+  # Frames before the manual settings have surely taken.
+  @settle 4
+  # Frames averaged after that.
+  @average 2
+  # A mean luma above this has clipped highlights.
+  @clip 235
+  @frame_timeout_ms 5_000
 
-  @doc "Measures the light now. Blocks for about a second."
+  @doc "Measures the light now. Blocks for a second or more."
   @impl true
   @spec measure() :: {:ok, float()} | {:error, term()}
   def measure do
@@ -71,34 +78,66 @@ defmodule Fp3Extras.LightSensor do
         {:error, :camera_busy}
 
       true ->
-        measure_pairs(@pairs)
+        measure_at(@settings)
     end
   end
 
-  defp measure_pairs([{gain, short, long} | rest]) do
-    with {:ok, low} <- green(gain, short),
-         {:ok, high} <- green(gain, long) do
-      if high >= @clip and rest != [],
-        do: measure_pairs(rest),
-        else: {:ok, max(high - low, 0.0) / (long - short) * 32 / gain}
+  defp measure_at([{gain, exposure} | rest]) do
+    with {:ok, luma} <- mean_luma(gain, exposure) do
+      if luma >= @clip and rest != [],
+        do: measure_at(rest),
+        else: {:ok, :math.pow(luma / 255, 2.2) / (exposure / 1.0e6 * gain)}
     end
   end
 
-  defp green(gain, exposure) do
-    opts = [
-      binned: true,
-      exposure: exposure,
-      gain: gain,
-      denoise: 0,
-      sharpen: false,
-      quality: 30,
-      path: "/tmp/fp3_extras_light.jpg"
-    ]
+  defp mean_luma(gain, exposure) do
+    {width, height} = @size
+    opts = [width: width, height: height, exposure: exposure, gain: gain, awb: false]
 
-    case Fp3Camera.snap_stats(:front, opts) do
-      {:ok, %{raw: %{g: g}}} -> {:ok, g}
-      {:ok, _no_stats} -> {:error, :no_statistics}
-      {:error, _} = error -> error
+    with {:ok, subscription} <- Fp3Camera.subscribe(:front, opts) do
+      try do
+        with :ok <- skip_frames(@settle),
+             {:ok, means} <- frame_means(@average, []) do
+          {:ok, Enum.sum(means) / length(means)}
+        end
+      after
+        Fp3Camera.unsubscribe(subscription)
+        flush_frames()
+      end
+    end
+  end
+
+  defp skip_frames(0), do: :ok
+
+  defp skip_frames(n) do
+    receive do
+      {:camera_frame, _frame} -> skip_frames(n - 1)
+    after
+      @frame_timeout_ms -> {:error, :no_frames}
+    end
+  end
+
+  defp frame_means(0, means), do: {:ok, means}
+
+  defp frame_means(n, means) do
+    receive do
+      {:camera_frame, %{width: width, height: height, data: data}} ->
+        # NV12: the luma plane comes first, one byte a pixel.
+        luma = binary_part(data, 0, width * height)
+        frame_means(n - 1, [byte_sum(luma, 0) / (width * height) | means])
+    after
+      @frame_timeout_ms -> {:error, :no_frames}
+    end
+  end
+
+  defp byte_sum(<<byte, rest::binary>>, sum), do: byte_sum(rest, sum + byte)
+  defp byte_sum(<<>>, sum), do: sum
+
+  defp flush_frames do
+    receive do
+      {:camera_frame, _frame} -> flush_frames()
+    after
+      0 -> :ok
     end
   end
 
@@ -106,8 +145,8 @@ defmodule Fp3Extras.LightSensor do
   @impl true
   @spec level(number()) :: float()
   def level(light) do
-    dark = :math.log10(config()[:dark] || 0.0001)
-    bright = :math.log10(config()[:bright] || 0.5)
+    dark = :math.log10(config()[:dark] || 0.001)
+    bright = :math.log10(config()[:bright] || 1000)
     position = (:math.log10(max(light, 1.0e-6)) - dark) / (bright - dark)
     position |> max(0.0) |> min(1.0)
   end

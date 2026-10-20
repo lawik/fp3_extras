@@ -40,9 +40,10 @@ the display down regardless.
 ## Ambient light
 
 There's no light sensor. `Fp3Extras.LightSensor` uses the front camera:
-two binned frames at two exposures, the raw green mean's slope with
-exposure, scaled to unity gain; about 1.2 s. A dim room measured 0.00075
-counts per exposure line.
+small NV12 frames from `Fp3Camera.subscribe/2` at a manual exposure and
+gain, the mean luma taken back through the ISP's gamma and divided by
+exposure time and gain. It starts sensitive (30 ms, 8x) and steps down
+when the picture clips; about a second per try.
 
 ## Orientation
 

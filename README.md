@@ -17,6 +17,7 @@ application around them.
 | `Fp3Extras.Power` | Suspend to idle with an RTC wake |
 | `Fp3Extras.Sleep` | The whole sleep: sensors, console, suspend, restore, Wi-Fi |
 | `Fp3Extras.WiFi` | Wi-Fi after a suspend: wait, firmware restart, wake on wireless; a VintageNet power manager |
+| `Fp3Extras.WiFi.Watchdog` | Restarts the Wi-Fi firmware when it stops transmitting while the network is in range |
 | `Fp3Extras.Battery` | Fuel gauge, charger, USB-C mode; time left; measuring the system's draw |
 | `Fp3Extras.Orientation` | Portrait or landscape from the accelerometer |
 | `Fp3Extras.LightSensor` | Ambient light from the front camera |
@@ -51,7 +52,7 @@ Only `ex_audio` is a hard dependency; the rest are called when loaded:
 | `Orientation` | `ex_qcom_smgr` |
 | `LightSensor` | `fp3_camera` |
 | `Fingerprint` | `circuits_gpio` |
-| `Sleep`, `WiFi` | `vintage_net`; the system's `wpa_cli` |
+| `Sleep`, `WiFi`, `WiFi.Watchdog` | `vintage_net`; the system's `wpa_cli` |
 | `Volume`, `Mic` | `ex_audio` |
 
 State across reboots goes under one directory:

@@ -77,6 +77,7 @@ defmodule Fp3Extras.MixProject do
           Fp3Extras.Power,
           Fp3Extras.WiFi,
           Fp3Extras.WiFi.PowerManager,
+          Fp3Extras.WiFi.Watchdog,
           Fp3Extras.Battery
         ],
         Sensing: [Fp3Extras.LightSensor, Fp3Extras.LightSensor.Source],

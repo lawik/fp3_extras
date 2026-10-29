@@ -11,9 +11,11 @@ defmodule Fp3Extras.WiFi do
 
   `reset/1` restarts the WCNSS remoteproc, reloading the firmware; `wlan0`
   disappears and reappears. `Fp3Extras.Sleep` uses it when VintageNet
-  doesn't report a connection in time, and `Fp3Extras.WiFi.PowerManager`
-  lets VintageNet's watchdog do the same. The restart hasn't been run on
-  a phone yet.
+  doesn't report a connection in time, `Fp3Extras.WiFi.Watchdog` when the
+  firmware stops transmitting, and `Fp3Extras.WiFi.PowerManager` lets
+  VintageNet's watchdog do the same. On a jammed phone the stop took
+  about 20 s, the firmware not answering, and `wlan0` authenticated 14 s
+  after the start.
 
   With a trigger from `wake_on_wireless/2` the association survives the
   suspend and the firmware answers ARP, neighbour discovery and rekeying.

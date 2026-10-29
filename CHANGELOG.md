@@ -8,6 +8,10 @@
   end a pattern.
 - `Fp3Extras.Screen`: `suspend_after_ms` and `:on_suspend`.
 - `Fp3Extras.Sleep` and `Fp3Extras.WiFi`.
+- `Fp3Extras.WiFi.Watchdog`: restarts the WCNSS firmware when Wi-Fi has
+  been disconnected for minutes with the network in range and the kernel
+  logging authentication timeouts or wcn36xx transmit errors; rate-limited,
+  backing off, giving up after three in a row.
 
 ## v0.1.0
 

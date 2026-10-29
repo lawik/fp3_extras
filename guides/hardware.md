@@ -93,6 +93,39 @@ device, so the system ships `rumble [-d DEV] MS [STRENGTH]` (1 to
 | `/dev/video0`, `/dev/video1` | Venus decoder and encoder (numbers can move) |
 | `/dev/gpiochip0` | SoC GPIOs. 135-138 are TrustZone's: don't touch |
 
+## Wi-Fi
+
+WCNSS is the WCN3680's core (Wi-Fi and Bluetooth), its firmware
+`wcnss.mbn` loaded by remoteproc as `a204000.remoteproc`; the kernel
+driver is the mainline `wcn36xx`. The MAC (`02:00:c2:…`, locally
+administered) survives a firmware restart.
+
+After many hours up the firmware can stop transmitting. Scans still find
+the access point, strong and close, but every authentication times out:
+
+```
+wlan0: send auth to 60:45:cb:8b:bf:a0 (try 3/3)
+wlan0: authentication with 60:45:cb:8b:bf:a0 timed out
+wcn36xx: ERROR Failed to flush hardware tx queues
+```
+
+Later in the same episode the last line became `wcn36xx: ERROR
+SMD_EVENT (312) not supported`, an event the driver doesn't know. An
+access point answers authentication before any key is checked, so the
+frames never got on the air. The remoteproc still reads `running`, so
+the kernel's crash recovery never runs, and wpa_supplicant retries
+forever.
+
+`stop` then `start` into the remoteproc's `state` fixes it: the stop
+blocks about 20 s (`No SMD response to req 127 in 10000ms`, then the same
+for `hal_stop`), the start takes under a second, and `wlan0`
+authenticates on the first frame 14 s later, with a DHCP lease 15 s
+after that and VintageNet reconnecting by itself. Bluetooth restarts with
+it. `Fp3Extras.WiFi.Watchdog` does this when the signs line up. What
+starts the jam is unknown; candidates are the firmware's power save, a
+roam or band change, a suspend, or the host and firmware disagreeing on
+the API.
+
 ## Video decode
 
 Venus decodes H.264, VP8, VP9, HEVC, VC-1, MPEG-2/4 and H.263 up to
